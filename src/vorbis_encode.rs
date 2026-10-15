@@ -1,6 +1,6 @@
-//! PCM → Vorbis encoding using FMOD's bundled libvorbisenc.
+//! PCM → Vorbis encoding using the bundled libvorbisenc.
 //!
-//! REA confirmed that `libfsbvorbis64.dll` (shipped with FMOD Studio) is stock
+//! REA confirmed that `libfsbvorbis64.dll` (shipped with the authoring tool) is stock
 //! **libvorbis 1.3.2** and exports the *full encoder* API — `vorbis_encode_init*`,
 //! `vorbis_analysis_*`, `vorbis_bitrate_*` and `vorbis_analysis_headerout`.
 //! This module drives that encoder through raw FFI, so PCM can be turned into
@@ -8,10 +8,11 @@
 //! at runtime and the handful of functions we need are resolved with
 //! `GetProcAddress`.
 //!
-//! The resulting setup header is checked against FMOD's bundled table (the 161
+//! The resulting setup header is checked against the bundled table (the 161
 //! pre-built headers keyed by CRC32), so the encoded bank is guaranteed to be
-//! decodable by FMOD. libvorbis' standard VBR quality levels map one-to-one onto
-//! those headers, which is exactly how FMOD authors its own Vorbis banks.
+//! decodable by the reference decoders. libvorbis' standard VBR quality levels
+//! map one-to-one onto those headers, which is exactly how the format authors
+//! its own Vorbis banks.
 //!
 //! The encoder runs on Windows only (the DLL is a Windows PE). Elsewhere
 //! [`encode`] reports [`VorbisExportError::EncoderUnavailable`].
@@ -24,7 +25,7 @@ pub const DEFAULT_QUALITY: f32 = 0.5;
 /// Encode interleaved `f32` PCM into a Vorbis stream ready for an FSB5 bank.
 ///
 /// `pcm.len()` must equal `channels * frames`. The setup header produced by the
-/// encoder is verified to be one of FMOD's bundled headers.
+/// encoder is verified to be one of the bundled headers.
 #[cfg(windows)]
 pub fn encode(
     pcm: &[f32],
@@ -44,7 +45,7 @@ pub fn encode(
     _quality: f32,
 ) -> Result<VorbisImport, VorbisExportError> {
     Err(VorbisExportError::EncoderUnavailable(
-        "PCM → Vorbis encoding requires Windows and FMOD's libfsbvorbis64.dll".to_string(),
+        "PCM → Vorbis encoding requires Windows and the libfsbvorbis64.dll encoder".to_string(),
     ))
 }
 
@@ -169,8 +170,8 @@ mod imp {
         fn load() -> Result<Lib, VorbisExportError> {
             let path = find_library().ok_or_else(|| {
                 VorbisExportError::EncoderUnavailable(
-                    "libfsbvorbis64.dll not found; install FMOD Studio or set \
-                     RAMOD_VORBIS_ENCODER to the DLL path"
+                    "libfsbvorbis64.dll not found; install a tool that provides it \
+                     or set RAMOD_VORBIS_ENCODER to the DLL path"
                         .to_string(),
                 )
             })?;
@@ -234,7 +235,7 @@ mod imp {
             }
             roots.push(base);
         }
-        // Newest "FMOD Studio <version>" directories sort first.
+        // Newest versioned directories sort first.
         roots.sort_by(|a, b| b.cmp(a));
         for root in &roots {
             let candidate = root.join("libfsbvorbis64.dll");
@@ -309,7 +310,7 @@ mod imp {
                 return Err(VorbisExportError::EncoderInit);
             }
 
-            // The setup header identifies the codebooks FMOD must use.
+            // The setup header identifies the codebooks the stream must use.
             let mut id_header = OggPacket::zeroed();
             let mut comment_header = OggPacket::zeroed();
             let mut setup_header = OggPacket::zeroed();
@@ -463,7 +464,7 @@ mod tests {
         let vorbis = bank.samples[0].vorbis_data().expect("VORBISDATA");
         assert!(
             setup_headers().get(vorbis.setup_crc32).is_some(),
-            "setup id {} must be a bundled FMOD header",
+            "setup id {} must be a bundled setup header",
             vorbis.setup_crc32
         );
 

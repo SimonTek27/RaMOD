@@ -1,12 +1,12 @@
-//! FMOD Sound Bank (FSB5) container parsing.
+//! FSB5 sound-bank container parsing.
 //!
-//! This module parses the FSB5 container used by FMOD Studio to package the
-//! audio samples referenced by FMOD event banks (`.fsb`). It is the foundation
+//! This module parses the FSB5 container that content-authoring tools use to
+//! package audio samples for their event banks (`.fsb`). It is the foundation
 //! of the RaMOD audio middleware: once samples and their metadata are decoded,
 //! the modding suite can list, extract, replace and re-encode bank contents.
 //!
 //! The layout implemented here was cross-checked against the REA analysis of
-//! `libfsbvorbis64.dll` shipped with FMOD Studio 2.03.13 and the publicly
+//! the `libfsbvorbis64.dll` shipped with a stock authoring tool and the publicly
 //! documented FSB5 binary template. Field names mirror that template so the
 //! code stays traceable to the reverse-engineered source.
 //!
@@ -276,9 +276,9 @@ pub struct Chunk {
 
 /// Decoded `VORBISDATA` metadata chunk.
 ///
-/// The chunk begins with a CRC32 that keys one of FMOD's pre-built Vorbis
+/// The chunk begins with a CRC32 that keys one of the pre-built Vorbis
 /// setup headers, followed by a seek table of `(offset, granule_position)`
-/// pairs (see the FSB5 binary template). The table may be sparse — FMOD itself
+/// pairs (see the FSB5 binary template). The table may be sparse — a reference
 /// records roughly one entry per second of audio — but each entry's offset
 /// points at the start of a packet in the sample data.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,7 +296,7 @@ pub struct VorbisData {
 ///
 /// There is no separate flags byte: the first bit of the payload is Vorbis'
 /// own audio/header discriminator (it is zero for audio packets), so all
-/// `size` bytes belong to the packet. This matches both FMOD's own output and
+/// `size` bytes belong to the packet. This matches both the reference output and
 /// the bundled reference decoder (`reference/reference_vorbis.py`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VorbisPacket<'a> {
@@ -641,7 +641,7 @@ impl Fsb5 {
     ///
     /// Returns `None` when the bank is not Vorbis-encoded or the sample has no
     /// data. Decoding the payloads additionally requires the setup header
-    /// identified by [`Sample::vorbis_data`], which FMOD ships internally.
+    /// identified by [`Sample::vorbis_data`], which is stored inside the bank.
     pub fn vorbis_packets(&self, index: usize) -> Option<VorbisPacketIter<'_>> {
         if self.format != SoundFormat::Vorbis {
             return None;
@@ -658,7 +658,7 @@ impl Fsb5 {
     ///
     /// Returns `None` for compressed formats (`Vorbis`, `Mpeg`, ADPCM, …),
     /// which require a dedicated decoder. The sample data is written verbatim,
-    /// matching FMOD's own layout (little-endian, signed for 16/24/32-bit).
+    /// matching the reference layout (little-endian, signed for 16/24/32-bit).
     pub fn sample_to_wav(&self, index: usize) -> Option<Vec<u8>> {
         let sample = self.samples.get(index)?;
         let data = self.sample_data(index)?;

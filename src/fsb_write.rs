@@ -265,7 +265,7 @@ struct BankRecord {
 /// Serialise a bank record, verifying the result parses back.
 fn serialize_bank(record: &BankRecord) -> Result<Vec<u8>, FsbWriteError> {
     // ---- data section (each sample 32-byte aligned) -------------------------
-    // FMOD aligns every sample to a 32-byte boundary and pads the section to the
+    // Samples are aligned to a 32-byte boundary and the section is padded to the
     // same boundary; `dataOffset` is stored in 16-byte units, so a 32-byte
     // boundary is always an even unit count.
     const DATA_ALIGN: usize = 32;
@@ -332,9 +332,9 @@ fn serialize_bank(record: &BankRecord) -> Result<Vec<u8>, FsbWriteError> {
         names_blob.extend_from_slice(sample.name.as_bytes());
         names_blob.push(0);
     }
-    // FMOD pads the name table so the data section starts on a 32-byte boundary
+    // The name table is padded so the data section starts on a 32-byte boundary
     // (`60 + sampleHeaderSize + nameTableSize` is a multiple of 32 in every
-    // FMOD-produced bank); the pad bytes live at the end of the name table.
+    // reference bank); the pad bytes live at the end of the name table.
     let mut name_table_size = (4 * count + names_blob.len()) as u32;
     while (FSB5_HEADER_SIZE as u32 + sample_header_size + name_table_size) % 32 != 0 {
         name_table_size += 1;
@@ -883,15 +883,14 @@ mod tests {
         assert_eq!(second.loop_start, Some(4));
         assert_eq!(second.loop_end, Some(40));
 
-        // Every sample is 32-byte aligned (matching FMOD), so the second
-        // sample's offset is a multiple of 32 and its payload is preserved at
-        // the front.
+        // Every sample is 32-byte aligned, so the second sample's offset is a
+        // multiple of 32 and its payload is preserved at the front.
         assert_eq!(second.data_offset % 32, 0);
         assert_eq!(&parsed.sample_data(1).unwrap()[..96], &ramp(48)[..]);
     }
 
     #[test]
-    fn built_bank_uses_fmod_32_byte_data_layout() {
+    fn built_bank_uses_32_byte_data_layout() {
         // Non-32-byte frame counts force inter-sample padding, exercising alignment.
         let a = PcmSample::new("alpha", 48_000, 2, ramp(6)); // 12 bytes
         let b = PcmSample::new("beta", 44_100, 1, ramp(9));
@@ -903,8 +902,8 @@ mod tests {
 
         let parsed = Fsb5::parse(&bank).expect("parse");
 
-        // FMOD starts the data section on a 32-byte boundary and pads the
-        // section to the same boundary; every sample is 32-byte aligned.
+        // The data section starts on a 32-byte boundary and is padded to the
+        // same boundary; every sample is 32-byte aligned.
         assert_eq!(parsed.data_section_offset % 32, 0);
         assert_eq!(parsed.data_size % 32, 0);
         for sample in &parsed.samples {

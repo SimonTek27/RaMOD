@@ -1,4 +1,4 @@
-"""Convert the reference FMOD/libvorbis setup-header table into a compact
+"""Convert the reference libvorbis setup-header table into a compact
 binary asset usable by the RaMOD Rust audio middleware.
 
 Input : reference_vorbis_headers.py  (a Python dict: crc32 -> setup header bytes)

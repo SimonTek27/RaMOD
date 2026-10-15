@@ -19,10 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vorbis`** — Vorbis ↔ Ogg: the bundled 161-entry setup-header table, the Ogg
   muxer/demuxer, FSB → Ogg export (`build_ogg`) and Ogg → FSB import
   (`import_ogg`, `import_ogg_to_bank`).
-- **`vorbis_encode`** — PCM → Vorbis encoding through FMOD's own
+- **`vorbis_encode`** — PCM → Vorbis encoding through the stock
   `libfsbvorbis64.dll` via raw FFI (`LoadLibraryW`/`GetProcAddress`), with a
   graceful `EncoderUnavailable` fallback off Windows or when the DLL is absent.
-- FMOD-faithful layout: 32-byte-aligned sample data, name-table padding so the
+- Spec-faithful layout: 32-byte-aligned sample data, name-table padding so the
   data section starts 32-byte aligned, and 32-byte padding of the data section.
 - Zero external crates: the crate depends only on the Rust standard library.
 

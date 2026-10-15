@@ -1,19 +1,19 @@
 # RaMOD — Rust Audio mod
 
 [![CI](https://github.com/SimonTek27/RaMOD/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonTek27/RaMOD/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
-**An open-source FMOD FSB5 audio middleware, written in Rust.**
+**An open-source FSB5 audio middleware, written in Rust.**
 
-RaMOD reads and writes FMOD **FSB5** sound banks and moves audio between the
+RaMOD reads and writes **FSB5** sound banks and moves audio between the
 FSB5 container and standard formats: parse banks, extract samples as WAV or Ogg
 Vorbis, build banks from WAV files, edit banks in place, and encode PCM to
 Vorbis — with **zero external crates** (Rust standard library only).
 
-It was derived by reverse engineering FMOD Studio 2.03.13 with
-[REA](https://github.com/morluto/rea) and validated against genuine, FMOD-built
-banks.
+It was derived by reverse engineering a stock content-authoring tool with
+[REA](https://github.com/morluto/rea) and validated against genuine, commercially
+built banks.
 
 ## Features
 
@@ -25,7 +25,7 @@ banks.
 | **Build** | FSB5 banks from WAV files, with loop points and non-standard sample rates |
 | **Edit** | rename, loop points, sample rate, replace audio — preserving everything else byte-for-byte |
 | **Import** | any Ogg Vorbis file → FSB5 `VORBIS` sample (setup header matched by CRC32) |
-| **Encode** | PCM → Vorbis by driving FMOD's own `libfsbvorbis64.dll` (no Vorbis crate) |
+| **Encode** | PCM → Vorbis by driving the stock `libfsbvorbis64.dll` encoder (no Vorbis crate) |
 
 ## Quick start
 
@@ -62,7 +62,7 @@ let bank = Fsb5Builder::new(SoundFormat::Pcm16).with_sample(sample).build()?;
 std::fs::write("hit.fsb", bank)?;
 ```
 
-Encode PCM to Vorbis (Windows; needs FMOD's `libfsbvorbis64.dll`):
+Encode PCM to Vorbis (Windows; needs the `libfsbvorbis64.dll` encoder):
 
 ```toml
 # ramod::encode_to_bank(&pcm_f32, channels, sample_rate, quality, name)
@@ -70,8 +70,8 @@ Encode PCM to Vorbis (Windows; needs FMOD's `libfsbvorbis64.dll`):
 
 ## Design notes
 
-* **No dependencies.** Only `std` is used. The Vorbis *encoder* binds FMOD's
-  stock `libfsbvorbis64.dll` at runtime through `LoadLibraryW`/`GetProcAddress`;
+* **No dependencies.** Only `std` is used. The Vorbis *encoder* binds the stock
+  `libfsbvorbis64.dll` at runtime through `LoadLibraryW`/`GetProcAddress`;
   every other path is portable.
 * **Self-verifying writer.** [`Fsb5Builder`] and [`BankEditor`] parse their own
   output before returning it, so a successful build is guaranteed to be
@@ -81,7 +81,7 @@ Encode PCM to Vorbis (Windows; needs FMOD's `libfsbvorbis64.dll`):
 
 ## FSB5 format notes
 
-The container layout was cross-checked against genuine FMOD banks:
+The container layout was cross-checked against genuine commercial banks:
 
 * **Header** (60 bytes, version ≥ 1): `FSB5` magic, version, sample count,
   sample-header size, name-table size, data size, mode, then the `zero` (8 B),
@@ -93,12 +93,13 @@ The container layout was cross-checked against genuine FMOD banks:
   (`60 + sampleHeaderSize + nameTableSize` is a multiple of 32) and every sample
   is 32-byte aligned; the section is padded to 32.
 * **`VORBISDATA`** holds a `u32` setup-header CRC32 plus a `(offset, granule)`
-  seek table (FMOD's is sparse; RaMOD writes one entry per packet — both valid).
+  seek table (the reference table is sparse; RaMOD writes one entry per packet —
+  both valid).
 * **Vorbis sample framing**: each packet is a `u16` length followed by exactly
   that many raw Vorbis bytes; a zero length terminates the stream. There is **no
   flags byte**.
-* FMOD does not embed the Vorbis setup header: it stores a **CRC32** that keys
-  one of 161 pre-built setup headers, bundled here in
+* The format does not embed the Vorbis setup header: it stores a **CRC32** that
+  keys one of 161 pre-built setup headers, bundled here in
   `assets/vorbis_setup_headers.bin`.
 
 ## Regenerating the setup-header table
@@ -129,11 +130,11 @@ cargo test
 Every push and pull request runs `cargo build`, `cargo test`, `cargo fmt
 --check` and `cargo clippy -D warnings` on Linux, Windows and macOS (see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The encoder tests skip
-themselves when FMOD's `libfsbvorbis64.dll` is unavailable.
+themselves when the `libfsbvorbis64.dll` encoder is unavailable.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
-RaMOD is an independent, clean-room project. FMOD is a trademark of Firelight
-Technologies; this project is not affiliated with or endorsed by Firelight.
+RaMOD is an independent, clean-room project and is not affiliated with, or
+endorsed by, any vendor of the formats it interoperates with.

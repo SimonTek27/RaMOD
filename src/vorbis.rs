@@ -1,7 +1,7 @@
 //! Rebuild a playable **Ogg Vorbis** stream from an FSB5 `VORBIS` sample.
 //!
-//! FMOD stores FSB Vorbis samples as a raw sequence of Vorbis packets and keeps
-//! only a CRC32 that identifies one of its pre-built setup headers (confirmed by
+//! FSB Vorbis samples are stored as a raw sequence of Vorbis packets, keeping
+//! only a CRC32 that identifies one of the pre-built setup headers (confirmed by
 //! REA: `libfsbvorbis64.dll` is stock libvorbis 1.3.2). To make the audio usable
 //! by ordinary tools (and by Bevy/rodio) this module:
 //!
@@ -16,12 +16,12 @@ use std::sync::OnceLock;
 
 use crate::fsb::{Fsb5, SoundFormat};
 
-/// Bundled table of FMOD's pre-built Vorbis setup headers.
+/// Bundled table of pre-built Vorbis setup headers.
 static SETUP_HEADER_BYTES: &[u8] = include_bytes!("../assets/vorbis_setup_headers.bin");
 
-/// Short block size exponent FMOD always uses (2^8 = 256).
+/// Short block size exponent the format always uses (2^8 = 256).
 const BLOCKSIZE_SHORT_EXP: u8 = 8;
-/// Long block size exponent FMOD always uses (2^11 = 2048).
+/// Long block size exponent the format always uses (2^11 = 2048).
 const BLOCKSIZE_LONG_EXP: u8 = 11;
 
 /// Vendor string written into the generated comment header.
@@ -50,7 +50,7 @@ pub enum VorbisExportError {
     PacketTooLarge(usize),
     /// The resulting bank could not be serialised.
     BankBuild(String),
-    /// The Vorbis encoder (FMOD's `libfsbvorbis64.dll`) is unavailable.
+    /// The Vorbis encoder (`libfsbvorbis64.dll`) is unavailable.
     EncoderUnavailable(String),
     /// The Vorbis encoder rejected the stream parameters.
     EncoderInit,
@@ -177,7 +177,7 @@ pub fn ogg_crc32(data: &[u8]) -> u32 {
 /// Standard CRC32 (as used by zlib/PNG): polynomial `0xedb88320` (reflected),
 /// initial value `0xffffffff` and a final XOR.
 ///
-/// FMOD keys its pre-built Vorbis setup headers with this CRC computed over the
+/// The pre-built Vorbis setup headers are keyed with this CRC computed over the
 /// full setup packet (including its `0x05 "vorbis"` signature).
 pub fn zlib_crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xffff_ffff;
@@ -346,7 +346,7 @@ pub fn build_ogg_with_vendor(
     }
 
     // The seek table maps a byte offset within the sample data to the granule
-    // (sample position) of the packet that starts there. FMOD's own table is
+    // (sample position) of the packet that starts there. The reference table is
     // sparse (~1 entry per second) while this crate writes one entry per
     // packet, so look packets up by offset rather than assuming they align
     // one-to-one.
@@ -497,7 +497,7 @@ impl VorbisImport {
     /// The FSB5 sample data section: each audio packet prefixed by its `u16`
     /// length, terminated by a zero length.
     ///
-    /// FMOD stores the raw Vorbis packet with no extra flags byte, so all
+    /// The raw Vorbis packet is stored with no extra flags byte, so all
     /// `size` bytes following the prefix belong to the packet.
     pub fn sample_data(&self) -> Result<Vec<u8>, VorbisExportError> {
         let mut out = Vec::new();
@@ -516,9 +516,9 @@ impl VorbisImport {
     /// The `VORBISDATA` chunk payload: the setup CRC32 followed by a per-packet
     /// seek table of `(byte offset into the sample data, granule position)`.
     ///
-    /// FMOD itself stores only a sparse table (roughly one entry per second of
-    /// audio); one entry per packet is equally valid and lets an Ogg rebuilt
-    /// from the bank carry an exact granule for every packet.
+    /// The reference implementation stores only a sparse table (roughly one
+    /// entry per second of audio); one entry per packet is equally valid and
+    /// lets an Ogg rebuilt from the bank carry an exact granule for every packet.
     pub fn vorbis_data(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&self.setup_crc32.to_le_bytes());
@@ -534,11 +534,11 @@ impl VorbisImport {
 
 /// Recover a Vorbis stream from a complete Ogg file.
 ///
-/// The stream must use one of FMOD's bundled setup headers: their CRC32 keys
-/// are the only values an FSB5 `VORBISDATA` chunk can reference, so anything
-/// else returns [`VorbisExportError::UnknownSetupHeader`]. libvorbis 1.3.2
-/// (the exact library FMOD ships) produces matching setup headers, so Ogg files
-/// authored with a compatible encoder are accepted.
+/// The stream must use one of the bundled setup headers: their CRC32 keys are
+/// the only values an FSB5 `VORBISDATA` chunk can reference, so anything else
+/// returns [`VorbisExportError::UnknownSetupHeader`]. libvorbis 1.3.2 (the exact
+/// library shipped by the authoring tool) produces matching setup headers, so
+/// Ogg files authored with a compatible encoder are accepted.
 pub fn import_ogg(ogg: &[u8]) -> Result<VorbisImport, VorbisExportError> {
     let packets = demux_ogg(ogg)?;
     if packets.len() < 3 {
@@ -807,10 +807,10 @@ mod tests {
     }
 
     #[test]
-    fn sample_data_uses_raw_fmod_framing() {
-        // FMOD stores `u16 length` + exactly `length` raw Vorbis bytes per
-        // packet, with no flags byte (verified against a real FMOD bank and the
-        // reference decoder). Lock the exact bytes so this cannot regress.
+    fn sample_data_uses_raw_vorbis_framing() {
+        // Each packet is `u16 length` + exactly `length` raw Vorbis bytes, with
+        // no flags byte (verified against a real bank and the reference
+        // decoder). Lock the exact bytes so this cannot regress.
         let import = VorbisImport {
             channels: 1,
             sample_rate: 44_100,

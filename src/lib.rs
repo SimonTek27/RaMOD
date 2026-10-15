@@ -1,8 +1,8 @@
 //! # RaMOD — Rust Audio mod
 //!
-//! An open-source, dependency-light **middleware for FMOD FSB5 sound banks**,
-//! derived from REA reverse engineering of the codec shipped with FMOD Studio
-//! 2.03.13.
+//! An open-source, dependency-light **middleware for FSB5 sound banks**, derived
+//! from REA reverse engineering of a stock content-authoring tool's codec
+//! library.
 //!
 //! ## Modules
 //!
@@ -13,13 +13,13 @@
 //!   [`BankEditor`], and the RIFF/WAVE reader.
 //! * [`vorbis`] — Vorbis ↔ Ogg: the bundled setup-header table, the Ogg
 //!   muxer/demuxer, FSB → Ogg export and Ogg → FSB import.
-//! * [`vorbis_encode`] — PCM → Vorbis encoding driven through FMOD's own
+//! * [`vorbis_encode`] — PCM → Vorbis encoding driven through the stock
 //!   `libfsbvorbis64.dll` encoder, loaded at runtime via `GetProcAddress`, so
 //!   the middleware needs no Vorbis crate.
 //!
 //! The crate depends only on the Rust standard library. Decoding, parsing and
-//! writing are fully portable; the Vorbis *encoder* additionally needs FMOD's
-//! `libfsbvorbis64.dll` at runtime (see [`vorbis_encode`]).
+//! writing are fully portable; the Vorbis *encoder* additionally needs the
+//! `libfsbvorbis64.dll` library at runtime (see [`vorbis_encode`]).
 //!
 //! ```
 //! use ramod::{Fsb5, SoundFormat};
