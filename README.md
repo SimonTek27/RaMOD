@@ -1,0 +1,120 @@
+# RaMOD — Rust Audio mod
+
+**An open-source FMOD FSB5 audio middleware, written in Rust.**
+
+RaMOD reads and writes FMOD **FSB5** sound banks and moves audio between the
+FSB5 container and standard formats: parse banks, extract samples as WAV or Ogg
+Vorbis, build banks from WAV files, edit banks in place, and encode PCM to
+Vorbis — with **zero external crates** (Rust standard library only).
+
+It was derived by reverse engineering FMOD Studio 2.03.13 with
+[REA](https://github.com/morluto/rea) and validated against genuine, FMOD-built
+banks.
+
+## Features
+
+| | |
+|---|---|
+| **Parse** | FSB5 header, per-sample headers, metadata chunks (`CHANNELS`, `FREQUENCY`, `LOOP`, `VORBISDATA`, …), name table and payloads |
+| **Codecs** | `PCM8/16/24/32`, `PCMFLOAT`, `VORBIS` |
+| **Extract** | PCM → RIFF/WAVE; Vorbis → playable **Ogg Vorbis** (headers re-synthesised, packets re-muxed into CRC-correct Ogg pages) |
+| **Build** | FSB5 banks from WAV files, with loop points and non-standard sample rates |
+| **Edit** | rename, loop points, sample rate, replace audio — preserving everything else byte-for-byte |
+| **Import** | any Ogg Vorbis file → FSB5 `VORBIS` sample (setup header matched by CRC32) |
+| **Encode** | PCM → Vorbis by driving FMOD's own `libfsbvorbis64.dll` (no Vorbis crate) |
+
+## Quick start
+
+```toml
+[dependencies]
+ramod = { git = "https://github.com/SimonTek27/RaMOD" }
+```
+
+```rust
+use ramod::Fsb5;
+
+// Parse a bank straight from a file.
+let bank = Fsb5::parse(&std::fs::read("Master.fsb")?)?;
+for (i, sample) in bank.samples.iter().enumerate() {
+    println!(
+        "{i}: {}  ({} Hz, {} ch, {} frames)",
+        sample.name, sample.frequency, sample.channels, sample.num_frames
+    );
+}
+
+// Rebuild a Vorbis sample as a playable Ogg file.
+let ogg = ramod::build_ogg(&bank, 0)?;
+std::fs::write("sample.ogg", ogg)?;
+```
+
+Build a bank from WAV data and re-serialise it:
+
+```rust
+use ramod::{Fsb5Builder, PcmSample, SoundFormat, Wav};
+
+let wav = Wav::parse(&std::fs::read("hit.wav")?)?;
+let sample = wav.into_pcm_sample("hit");
+let bank = Fsb5Builder::new(SoundFormat::Pcm16).with_sample(sample).build()?;
+std::fs::write("hit.fsb", bank)?;
+```
+
+Encode PCM to Vorbis (Windows; needs FMOD's `libfsbvorbis64.dll`):
+
+```toml
+# ramod::encode_to_bank(&pcm_f32, channels, sample_rate, quality, name)
+```
+
+## Design notes
+
+* **No dependencies.** Only `std` is used. The Vorbis *encoder* binds FMOD's
+  stock `libfsbvorbis64.dll` at runtime through `LoadLibraryW`/`GetProcAddress`;
+  every other path is portable.
+* **Self-verifying writer.** [`Fsb5Builder`] and [`BankEditor`] parse their own
+  output before returning it, so a successful build is guaranteed to be
+  readable.
+* **Faithful editing.** Metadata chunks, header fields and codec payloads the
+  editor does not touch are preserved byte-for-byte.
+
+## FSB5 format notes
+
+The container layout was cross-checked against genuine FMOD banks:
+
+* **Header** (60 bytes, version ≥ 1): `FSB5` magic, version, sample count,
+  sample-header size, name-table size, data size, mode, then the `zero` (8 B),
+  `hash` (16 B) and `dummy` (8 B) fields.
+* **Sample header**: a packed 64-bit word (`extraParams:1`, `frequency:4`,
+  `twoChannels:1`, `dataOffset:28` in **16-byte units**, `samples:30`) followed
+  by optional metadata chunks.
+* **Alignment**: the data section starts on a **32-byte boundary**
+  (`60 + sampleHeaderSize + nameTableSize` is a multiple of 32) and every sample
+  is 32-byte aligned; the section is padded to 32.
+* **`VORBISDATA`** holds a `u32` setup-header CRC32 plus a `(offset, granule)`
+  seek table (FMOD's is sparse; RaMOD writes one entry per packet — both valid).
+* **Vorbis sample framing**: each packet is a `u16` length followed by exactly
+  that many raw Vorbis bytes; a zero length terminates the stream. There is **no
+  flags byte**.
+* FMOD does not embed the Vorbis setup header: it stores a **CRC32** that keys
+  one of 161 pre-built setup headers, bundled here in
+  `assets/vorbis_setup_headers.bin`.
+
+## Regenerating the setup-header table
+
+```sh
+python tools/build_vorbis_setup_headers.py
+```
+
+Reads `tools/reference_vorbis_headers.py` and writes
+`assets/vorbis_setup_headers.bin`.
+
+## Running the tests
+
+```sh
+cargo test
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+RaMOD is an independent, clean-room project. FMOD is a trademark of Firelight
+Technologies; this project is not affiliated with or endorsed by Firelight.
