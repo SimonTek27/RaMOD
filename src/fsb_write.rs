@@ -586,9 +586,8 @@ impl BankEditor {
             Some(sample) => {
                 if let Some(bytes_per_sample) = format.bytes_per_sample() {
                     let frame_bytes = sample.channels.max(1) as usize * bytes_per_sample;
-                    if frame_bytes > 0 {
-                        sample.num_frames = (data.len() / frame_bytes) as u32;
-                    }
+                    // `frame_bytes` is always >= 1, so the division cannot fail.
+                    sample.num_frames = data.len().checked_div(frame_bytes).unwrap_or(0) as u32;
                 }
                 sample.data = data;
                 true
