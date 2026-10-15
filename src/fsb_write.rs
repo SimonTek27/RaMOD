@@ -14,7 +14,7 @@
 //!                   units and the section itself starts 32-byte aligned)
 //! ```
 
-use crate::fsb::{FsbError, Fsb5, SoundFormat, FSB5_HEADER_SIZE};
+use crate::fsb::{Fsb5, FsbError, SoundFormat, FSB5_HEADER_SIZE};
 
 /// Errors raised while building a bank or reading WAV input.
 #[derive(Debug)]
@@ -342,9 +342,8 @@ fn serialize_bank(record: &BankRecord) -> Result<Vec<u8>, FsbWriteError> {
     }
 
     // ---- assemble -----------------------------------------------------------
-    let mut out = Vec::with_capacity(
-        60 + sample_headers.len() + name_table_size as usize + data_blob.len(),
-    );
+    let mut out =
+        Vec::with_capacity(60 + sample_headers.len() + name_table_size as usize + data_blob.len());
     out.extend_from_slice(b"FSB5");
     out.extend_from_slice(&record.version.to_le_bytes());
     out.extend_from_slice(&(count as u32).to_le_bytes());
@@ -735,8 +734,7 @@ impl Wav {
                     if size < 16 {
                         return Err(WavError::Truncated);
                     }
-                    let audio_format =
-                        u16::from_le_bytes([bytes[body], bytes[body + 1]]);
+                    let audio_format = u16::from_le_bytes([bytes[body], bytes[body + 1]]);
                     let channels = u16::from_le_bytes([bytes[body + 2], bytes[body + 3]]);
                     let sample_rate = u32::from_le_bytes([
                         bytes[body + 4],
@@ -744,8 +742,7 @@ impl Wav {
                         bytes[body + 6],
                         bytes[body + 7],
                     ]);
-                    let bits_per_sample =
-                        u16::from_le_bytes([bytes[body + 14], bytes[body + 15]]);
+                    let bits_per_sample = u16::from_le_bytes([bytes[body + 14], bytes[body + 15]]);
                     format = Some((audio_format, channels, sample_rate, bits_per_sample));
                 }
                 b"data" => {
@@ -939,10 +936,7 @@ mod tests {
             .with_sample(sample)
             .build()
             .unwrap_err();
-        assert!(matches!(
-            error,
-            FsbWriteError::MisalignedSampleData { .. }
-        ));
+        assert!(matches!(error, FsbWriteError::MisalignedSampleData { .. }));
     }
 
     #[test]
@@ -1000,7 +994,10 @@ mod tests {
 
     #[test]
     fn rejects_non_wave_input() {
-        assert!(matches!(Wav::parse(b"NOPE!!!!"), Err(WavError::NotRiffWave)));
+        assert!(matches!(
+            Wav::parse(b"NOPE!!!!"),
+            Err(WavError::NotRiffWave)
+        ));
     }
 
     // ---- BankEditor ------------------------------------------------------
@@ -1132,7 +1129,9 @@ mod tests {
         assert_eq!(parsed.samples[0].name, "music");
         assert!(parsed.samples[0].is_looped());
 
-        let vorbis = parsed.samples[0].vorbis_data().expect("VORBISDATA preserved");
+        let vorbis = parsed.samples[0]
+            .vorbis_data()
+            .expect("VORBISDATA preserved");
         assert_eq!(vorbis.setup_crc32, 118_203_318);
 
         let packets: Vec<_> = parsed.vorbis_packets(0).unwrap().collect();

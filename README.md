@@ -1,5 +1,9 @@
 # RaMOD — Rust Audio mod
 
+[![CI](https://github.com/SimonTek27/RaMOD/actions/workflows/ci.yml/badge.svg)](https://github.com/SimonTek27/RaMOD/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+
 **An open-source FMOD FSB5 audio middleware, written in Rust.**
 
 RaMOD reads and writes FMOD **FSB5** sound banks and moves audio between the
@@ -106,11 +110,26 @@ python tools/build_vorbis_setup_headers.py
 Reads `tools/reference_vorbis_headers.py` and writes
 `assets/vorbis_setup_headers.bin`.
 
+## Examples
+
+```sh
+cargo run --example build_bank
+```
+
+Builds a bank from a generated sine wave and reads it back.
+
 ## Running the tests
 
 ```sh
 cargo test
 ```
+
+## Continuous integration
+
+Every push and pull request runs `cargo build`, `cargo test`, `cargo fmt
+--check` and `cargo clippy -D warnings` on Linux, Windows and macOS (see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The encoder tests skip
+themselves when FMOD's `libfsbvorbis64.dll` is unavailable.
 
 ## License
 

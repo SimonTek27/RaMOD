@@ -44,9 +44,15 @@ pub enum FsbError {
     /// The first four bytes are not `FSB5`.
     BadMagic([u8; 4]),
     /// A read ran past the end of the buffer.
-    Truncated { context: &'static str, offset: usize },
+    Truncated {
+        context: &'static str,
+        offset: usize,
+    },
     /// The declared number of samples cannot fit in the buffer.
-    SampleCountTooLarge { samples: u32, available_bytes: usize },
+    SampleCountTooLarge {
+        samples: u32,
+        available_bytes: usize,
+    },
 }
 
 impl fmt::Display for FsbError {
@@ -61,7 +67,10 @@ impl fmt::Display for FsbError {
             FsbError::Truncated { context, offset } => {
                 write!(f, "truncated while reading {context} at offset {offset}")
             }
-            FsbError::SampleCountTooLarge { samples, available_bytes } => write!(
+            FsbError::SampleCountTooLarge {
+                samples,
+                available_bytes,
+            } => write!(
                 f,
                 "declared {samples} samples but only {available_bytes} bytes are available"
             ),
@@ -155,7 +164,10 @@ impl SoundFormat {
 
     /// Whether the format is uncompressed linear PCM.
     pub fn is_pcm(self) -> bool {
-        matches!(self, SoundFormat::Pcm8 | SoundFormat::Pcm16 | SoundFormat::Pcm32)
+        matches!(
+            self,
+            SoundFormat::Pcm8 | SoundFormat::Pcm16 | SoundFormat::Pcm32
+        )
     }
 
     /// Bytes per sample for the uncompressed formats, if applicable.
@@ -298,7 +310,7 @@ impl<'a> VorbisPacket<'a> {
     /// Vorbis audio packets begin with a zero bit, so every packet in an FSB5
     /// stream is normally an audio packet.
     pub fn is_audio(&self) -> bool {
-        self.data.first().map_or(false, |byte| byte & 0x01 == 0)
+        self.data.first().is_some_and(|byte| byte & 0x01 == 0)
     }
 }
 
@@ -318,7 +330,8 @@ impl<'a> Iterator for VorbisPacketIter<'a> {
             self.done = true;
             return None;
         }
-        let size = u16::from_le_bytes([self.data[self.cursor], self.data[self.cursor + 1]]) as usize;
+        let size =
+            u16::from_le_bytes([self.data[self.cursor], self.data[self.cursor + 1]]) as usize;
         self.cursor += 2;
         if size == 0 || self.cursor + size > self.data.len() {
             self.done = true;
@@ -445,7 +458,10 @@ impl Fsb5 {
     /// Parse an FSB5 bank from its raw bytes.
     pub fn parse(data: &[u8]) -> Result<Self, FsbError> {
         if data.len() < 4 {
-            return Err(FsbError::TooShort { needed: 4, got: data.len() });
+            return Err(FsbError::TooShort {
+                needed: 4,
+                got: data.len(),
+            });
         }
         let mut magic = [0u8; 4];
         magic.copy_from_slice(&data[0..4]);
@@ -460,9 +476,16 @@ impl Fsb5 {
         let data_size = read_u32(data, 20, "dataSize")?;
         let mode = read_u32(data, 24, "mode")?;
 
-        let header_size = if version == 0 { FSB5_HEADER_SIZE_V0 } else { FSB5_HEADER_SIZE };
+        let header_size = if version == 0 {
+            FSB5_HEADER_SIZE_V0
+        } else {
+            FSB5_HEADER_SIZE
+        };
         if data.len() < header_size {
-            return Err(FsbError::TooShort { needed: header_size, got: data.len() });
+            return Err(FsbError::TooShort {
+                needed: header_size,
+                got: data.len(),
+            });
         }
 
         let mut header_zero = [0u8; 8];
@@ -515,10 +538,14 @@ impl Fsb5 {
                     next = bits(chunk_raw as u64, 0, 1) == 1;
                     let size = bits(chunk_raw as u64, 1, 24) as u32;
                     let tag = bits(chunk_raw as u64, 25, 7) as u32;
-                    let payload = read_bytes(data, cursor, size as usize, "metadata payload")?.to_vec();
+                    let payload =
+                        read_bytes(data, cursor, size as usize, "metadata payload")?.to_vec();
                     cursor += size as usize;
                     apply_chunk(&mut sample, tag, &payload);
-                    sample.chunks.push(Chunk { kind: ChunkType::from_u32(tag), data: payload });
+                    sample.chunks.push(Chunk {
+                        kind: ChunkType::from_u32(tag),
+                        data: payload,
+                    });
                 }
             }
 
@@ -551,7 +578,8 @@ impl Fsb5 {
         }
 
         // ---- sample data ----------------------------------------------------
-        let data_section_offset = header_size + sample_header_size as usize + name_table_size as usize;
+        let data_section_offset =
+            header_size + sample_header_size as usize + name_table_size as usize;
 
         Ok(Fsb5 {
             version,
@@ -762,7 +790,11 @@ pub fn frequency_from_index(index: u32) -> Option<u32> {
 /// Extract `len` bits starting at `start` from a little-endian bit field.
 fn bits(value: u64, start: u32, len: u32) -> u64 {
     let stop = start + len;
-    let mask = if stop >= 64 { u64::MAX } else { (1u64 << stop) - 1 };
+    let mask = if stop >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << stop) - 1
+    };
     (value & mask) >> start
 }
 
@@ -856,7 +888,10 @@ mod tests {
 
     #[test]
     fn rejects_short_buffer() {
-        assert!(matches!(Fsb5::parse(b"FSB"), Err(FsbError::TooShort { .. })));
+        assert!(matches!(
+            Fsb5::parse(b"FSB"),
+            Err(FsbError::TooShort { .. })
+        ));
     }
 
     #[test]
@@ -883,7 +918,7 @@ mod tests {
         file.extend_from_slice(b"FSB5");
         file.extend_from_slice(&1u32.to_le_bytes()); // version
         file.extend_from_slice(&1u32.to_le_bytes()); // numSamples
-        // sampleHeaderSize = 8 (fixed) + 4 (chunk header) + 12 (crc32 + seek entry)
+                                                     // sampleHeaderSize = 8 (fixed) + 4 (chunk header) + 12 (crc32 + seek entry)
         file.extend_from_slice(&24u32.to_le_bytes());
         file.extend_from_slice(&0u32.to_le_bytes()); // nameTableSize
         file.extend_from_slice(&6u32.to_le_bytes()); // dataSize
@@ -925,10 +960,7 @@ mod tests {
         assert_eq!(vorbis.setup_crc32, 118_203_318);
         assert_eq!(vorbis.seek_table, vec![(0, 0)]);
 
-        let packets: Vec<_> = bank
-            .vorbis_packets(0)
-            .expect("vorbis packets")
-            .collect();
+        let packets: Vec<_> = bank.vorbis_packets(0).expect("vorbis packets").collect();
         assert_eq!(packets.len(), 1);
         assert!(packets[0].is_audio());
         assert_eq!(packets[0].data, &[0xAA, 0xBB]);
@@ -951,7 +983,10 @@ mod tests {
         // audio_format = PCM(1), channels = 1, sample_rate = 44100, bits = 16
         assert_eq!(u16::from_le_bytes([wav[20], wav[21]]), 1);
         assert_eq!(u16::from_le_bytes([wav[22], wav[23]]), 1);
-        assert_eq!(u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]), 44_100);
+        assert_eq!(
+            u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]),
+            44_100
+        );
         assert_eq!(u16::from_le_bytes([wav[34], wav[35]]), 16);
         assert_eq!(&wav[36..40], b"data");
         assert_eq!(u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]), 8);

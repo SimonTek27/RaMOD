@@ -430,7 +430,8 @@ mod tests {
     fn sine(frames: usize, rate: u32, channels: usize) -> Vec<f32> {
         let mut out = Vec::with_capacity(frames * channels);
         for frame in 0..frames {
-            let value = (2.0 * std::f32::consts::PI * 440.0 * frame as f32 / rate as f32).sin() * 0.5;
+            let value =
+                (2.0 * std::f32::consts::PI * 440.0 * frame as f32 / rate as f32).sin() * 0.5;
             for _ in 0..channels {
                 out.push(value);
             }

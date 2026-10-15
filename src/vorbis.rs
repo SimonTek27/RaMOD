@@ -76,7 +76,10 @@ impl std::fmt::Display for VorbisExportError {
                 f.write_str("stream is missing Vorbis identification/setup headers")
             }
             VorbisExportError::PacketTooLarge(bytes) => {
-                write!(f, "audio packet of {bytes} bytes exceeds the FSB5 size limit")
+                write!(
+                    f,
+                    "audio packet of {bytes} bytes exceeds the FSB5 size limit"
+                )
             }
             VorbisExportError::BankBuild(message) => {
                 write!(f, "could not build FSB5 bank: {message}")
@@ -322,9 +325,9 @@ pub fn build_ogg_with_vendor(
     let vorbis_data = sample
         .vorbis_data()
         .ok_or(VorbisExportError::MissingVorbisData)?;
-    let setup = setup_headers()
-        .get(vorbis_data.setup_crc32)
-        .ok_or(VorbisExportError::UnknownSetupHeader(vorbis_data.setup_crc32))?;
+    let setup = setup_headers().get(vorbis_data.setup_crc32).ok_or(
+        VorbisExportError::UnknownSetupHeader(vorbis_data.setup_crc32),
+    )?;
 
     let id_header = build_id_header(sample.channels.max(1), sample.frequency);
     let comment_header = build_comment_header(vendor);
@@ -352,8 +355,12 @@ pub fn build_ogg_with_vendor(
         .iter()
         .map(|&(offset, granule)| (offset, granule as u64))
         .collect();
-    let final_granule = (sample.num_frames as u64)
-        .max(vorbis_data.seek_table.last().map_or(0, |entry| entry.1 as u64));
+    let final_granule = (sample.num_frames as u64).max(
+        vorbis_data
+            .seek_table
+            .last()
+            .map_or(0, |entry| entry.1 as u64),
+    );
 
     let mut pending: Vec<&[u8]> = Vec::new();
     let mut pending_segments = 0usize;
@@ -439,7 +446,7 @@ fn demux_ogg(ogg: &[u8]) -> Result<Vec<OggPacket>, VorbisExportError> {
 
         // The continuation flag must agree with whether a packet is pending.
         let continued = header_type & 0x01 != 0;
-        if continued != !partial.is_empty() {
+        if continued == partial.is_empty() {
             return Err(VorbisExportError::NotOgg);
         }
 
@@ -625,7 +632,10 @@ mod tests {
         assert_eq!(header[0], 0x01);
         assert_eq!(&header[1..7], b"vorbis");
         assert_eq!(header[11], 2); // channels
-        assert_eq!(u32::from_le_bytes([header[12], header[13], header[14], header[15]]), 48_000);
+        assert_eq!(
+            u32::from_le_bytes([header[12], header[13], header[14], header[15]]),
+            48_000
+        );
         // blocksize byte: short=8 (low nibble), long=11 (high nibble)
         assert_eq!(header[28], 0xB8);
         assert_eq!(header[29], 0x01);
@@ -636,7 +646,10 @@ mod tests {
         let header = build_comment_header("ramod");
         assert_eq!(header[0], 0x03);
         assert_eq!(&header[1..7], b"vorbis");
-        assert_eq!(u32::from_le_bytes([header[7], header[8], header[9], header[10]]), 5);
+        assert_eq!(
+            u32::from_le_bytes([header[7], header[8], header[9], header[10]]),
+            5
+        );
         assert_eq!(&header[11..16], b"ramod");
         assert_eq!(header[header.len() - 1], 0x01);
     }
@@ -763,7 +776,10 @@ mod tests {
         assert_eq!(import.channels, 2);
         assert_eq!(import.sample_rate, 48_000);
         assert_eq!(import.setup_crc32, 118_203_318);
-        assert_eq!(import.audio_packets, vec![a.to_vec(), b.to_vec(), c.to_vec()]);
+        assert_eq!(
+            import.audio_packets,
+            vec![a.to_vec(), b.to_vec(), c.to_vec()]
+        );
         assert_eq!(import.granules, vec![100, 300, 300]);
         assert_eq!(import.num_frames(), 300);
 
