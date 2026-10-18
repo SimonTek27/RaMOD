@@ -2,12 +2,12 @@
 name = "ramod"
 version = "0.1.0"
 edition = "2021"
-description = "RaMOD — Rust Audio mod: an open-source FSB5 audio middleware (FSB5 read/write, Ogg Vorbis import/export, PCM → Vorbis encoding)."
+description = "RaMOD — Rust Audio mod: an open-source FSB5 audio middleware (FSB5 read/write, Ogg Vorbis import/export, PCM → Vorbis encoding). Foundation of an open-source FMOD-class stack for Bevy."
 license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/SimonTek27/RaMOD"
-keywords = ["fsb5", "vorbis", "audio", "middleware", "modding"]
-categories = ["multimedia::audio", "parser-implementations"]
+keywords = ["fsb5", "vorbis", "audio", "middleware", "modding", "bevy"]
+categories = ["multimedia::audio", "parser-implementations", "command-line-utilities"]
 rust-version = "1.70"
 exclude = ["tools/**"]
 
@@ -16,3 +16,7 @@ exclude = ["tools/**"]
 [lib]
 name = "ramod"
 path = "src/lib.rs"
+
+[[bin]]
+name = "ramod"
+path = "src/bin/ramod.rs"
