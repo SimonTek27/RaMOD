@@ -8,10 +8,18 @@ readme = "README.md"
 repository = "https://github.com/SimonTek27/RaMOD"
 keywords = ["fsb5", "vorbis", "audio", "middleware", "modding", "bevy"]
 categories = ["multimedia::audio", "parser-implementations", "command-line-utilities"]
-rust-version = "1.70"
+rust-version = "1.85"
 exclude = ["tools/**"]
 
+[features]
+default = ["encoder-rust"]
+# Pure-Rust Vorbis encoder (rusty_vorbis). Cross-platform, no C/FFI.
+encoder-rust = ["dep:rusty_vorbis"]
+# Legacy Windows path: load libfsbvorbis64.dll at runtime (no cargo dep).
+encoder-dll = []
+
 [dependencies]
+rusty_vorbis = { version = "0.1.1", optional = true, default-features = false }
 
 [lib]
 name = "ramod"
