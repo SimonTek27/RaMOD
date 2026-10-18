@@ -1,18 +1,19 @@
 //! RaMOD command-line interface (Phase 0).
 //!
-//! Subcommands (initial set):
+//! Subcommands:
 //! - `list`    — list samples in a bank
 //! - `info`    — detailed bank / sample info
-//! - `extract` — extract one sample to WAV or Ogg
+//! - `extract` — extract one sample to WAV (PCM) or Ogg (Vorbis)
+//! - `build`   — build an FSB5 bank from one or more WAV files
 //!
-//! Future: `build`, `edit`, `convert` (see ROADMAP.md item 6).
+//! Future: `edit`, `convert` (see ROADMAP.md item 6).
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
-use ramod::{build_ogg, Fsb5, SoundFormat};
+use ramod::{build_ogg, Fsb5, Fsb5Builder, SoundFormat, Wav};
 
 fn main() {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
@@ -26,6 +27,7 @@ fn main() {
         "list" => cmd_list(&args),
         "info" => cmd_info(&args),
         "extract" => cmd_extract(&args),
+        "build" => cmd_build(&args),
         "help" | "-h" | "--help" => {
             print_usage();
             0
@@ -47,6 +49,10 @@ fn print_usage() {
            ramod list <bank.fsb>\n\
            ramod info <bank.fsb> [--index N]\n\
            ramod extract <bank.fsb> --index N --out <file>\n\
+           ramod build --out <bank.fsb> <file1.wav> [file2.wav ...]\n\
+         \n\
+         extract: PCM samples → WAV, Vorbis samples → Ogg\n\
+         build:   WAV files → FSB5 PCM16 bank (sample names from file stems)\n\
          \n\
          See DESIGN.md / ROADMAP.md / ARCHITECTURE.md for the long-term plan."
     );
@@ -71,7 +77,7 @@ fn cmd_list(args: &[String]) -> i32 {
     };
 
     println!(
-        "{} — {} sample(s), format={:?}",
+        "{} — {} sample(s), format={}",
         path,
         bank.len(),
         bank.format
@@ -127,13 +133,13 @@ fn cmd_info(args: &[String]) -> i32 {
         }
     };
 
-    println!("file:              {path}");
-    println!("version:           {}", bank.version);
-    println!("samples:           {}", bank.len());
-    println!("format:            {:?}", bank.format);
-    println!("sample_header_size:{}", bank.sample_header_size);
-    println!("name_table_size:   {}", bank.name_table_size);
-    println!("data_size:         {}", bank.data_size);
+    println!("file:               {path}");
+    println!("version:            {}", bank.version);
+    println!("samples:            {}", bank.len());
+    println!("format:             {}", bank.format);
+    println!("sample_header_size: {}", bank.sample_header_size);
+    println!("name_table_size:    {}", bank.name_table_size);
+    println!("data_size:          {}", bank.data_size);
 
     if let Some(idx) = index {
         let Some(s) = bank.samples.get(idx) else {
@@ -141,16 +147,16 @@ fn cmd_info(args: &[String]) -> i32 {
             return 1;
         };
         println!("--- sample {idx} ---");
-        println!("name:       {}", s.name);
-        println!("frequency:  {}", s.frequency);
-        println!("channels:   {}", s.channels);
-        println!("frames:     {}", s.num_frames);
-        println!("duration:   {:.3}s", s.duration_seconds());
-        println!("data_offset:{}", s.data_offset);
-        println!("loop:       {:?}-{:?}", s.loop_start, s.loop_end);
-        println!("chunks:     {}", s.chunks.len());
+        println!("name:        {}", s.name);
+        println!("frequency:   {}", s.frequency);
+        println!("channels:    {}", s.channels);
+        println!("frames:      {}", s.num_frames);
+        println!("duration:    {:.3}s", s.duration_seconds());
+        println!("data_offset: {}", s.data_offset);
+        println!("loop:        {:?}-{:?}", s.loop_start, s.loop_end);
+        println!("chunks:      {}", s.chunks.len());
         for c in &s.chunks {
-            println!("  - {:?} ({} bytes)", c.kind, c.data.len());
+            println!("  - {} ({} bytes)", c.kind, c.data.len());
         }
         if let Some(vd) = s.vorbis_data() {
             println!("vorbis setup CRC32: {:#010x}", vd.setup_crc32);
@@ -216,40 +222,113 @@ fn cmd_extract(args: &[String]) -> i32 {
     }
 
     let out_path = Path::new(&out_path);
-    let result = match bank.format {
-        SoundFormat::Vorbis => build_ogg(&bank, idx).map(|bytes| (bytes, "ogg")),
-        SoundFormat::Pcm8 | SoundFormat::Pcm16 | SoundFormat::Pcm24 | SoundFormat::Pcm32
-        | SoundFormat::PcmFloat => {
-            // WAV extract via sample payload + simple RIFF header is future work;
-            // for now require Vorbis or document limitation.
-            eprintln!(
-                "extract: PCM → WAV not yet wired in the CLI (use the library API). \
-                 Vorbis → Ogg is supported."
-            );
-            return 1;
-        }
+    let bytes = match bank.format {
+        SoundFormat::Vorbis => match build_ogg(&bank, idx) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("extract: {e}");
+                return 1;
+            }
+        },
+        SoundFormat::Pcm8
+        | SoundFormat::Pcm16
+        | SoundFormat::Pcm24
+        | SoundFormat::Pcm32
+        | SoundFormat::PcmFloat => match bank.sample_to_wav(idx) {
+            Some(b) => b,
+            None => {
+                eprintln!("extract: sample_to_wav failed for index {idx}");
+                return 1;
+            }
+        },
         other => {
-            eprintln!("extract: unsupported format {other:?}");
+            eprintln!("extract: unsupported format {other}");
             return 1;
         }
     };
 
-    match result {
-        Ok((bytes, _kind)) => {
-            if let Err(e) = fs::write(out_path, &bytes) {
-                eprintln!("extract: write {}: {e}", out_path.display());
+    if let Err(e) = fs::write(out_path, &bytes) {
+        eprintln!("extract: write {}: {e}", out_path.display());
+        return 1;
+    }
+    println!("wrote {} bytes → {}", bytes.len(), out_path.display());
+    0
+}
+
+fn cmd_build(args: &[String]) -> i32 {
+    let mut out: Option<PathBuf> = None;
+    let mut inputs: Vec<PathBuf> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("build: --out needs a path");
+                    return 2;
+                };
+                out = Some(PathBuf::from(v));
+            }
+            p if !p.starts_with('-') => inputs.push(PathBuf::from(p)),
+            other => {
+                eprintln!("build: unexpected argument {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+
+    let Some(out_path) = out else {
+        eprintln!("build: require --out <bank.fsb> and at least one WAV");
+        return 2;
+    };
+    if inputs.is_empty() {
+        eprintln!("build: need one or more .wav inputs");
+        return 2;
+    }
+
+    let mut builder = Fsb5Builder::new(SoundFormat::Pcm16);
+    for path in &inputs {
+        let data = match fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("build: read {}: {e}", path.display());
                 return 1;
             }
-            println!(
-                "wrote {} bytes → {}",
-                bytes.len(),
-                out_path.display()
-            );
-            0
-        }
-        Err(e) => {
-            eprintln!("extract: {e}");
-            1
-        }
+        };
+        let wav = match Wav::parse(&data) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("build: parse {}: {e}", path.display());
+                return 1;
+            }
+        };
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("sample")
+            .to_string();
+        let sample = wav.into_pcm_sample(name);
+        builder.push(sample);
     }
+
+    let bank = match builder.build() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("build: {e}");
+            return 1;
+        }
+    };
+
+    if let Err(e) = fs::write(&out_path, &bank) {
+        eprintln!("build: write {}: {e}", out_path.display());
+        return 1;
+    }
+    println!(
+        "wrote {} sample(s), {} bytes → {}",
+        inputs.len(),
+        bank.len(),
+        out_path.display()
+    );
+    0
 }
