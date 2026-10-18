@@ -11,9 +11,6 @@ FSB5 container and standard formats: parse banks, extract samples as WAV or Ogg
 Vorbis, build banks from WAV files, edit banks in place, and encode PCM to
 Vorbis — with **zero external crates** (Rust standard library only).
 
-It was derived by reverse engineering a stock content-authoring tool with
-[REA](https://github.com/morluto/rea) and validated against genuine, commercially
-built banks.
 
 ## Features
 
