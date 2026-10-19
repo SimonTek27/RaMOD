@@ -4,6 +4,7 @@
 //!
 //! ## Modules
 //!
+//! * [`error`] — unified [`RamodError`] + source chains
 //! * [`fsb`] — FSB5 container parsing
 //! * [`fsb_write`] — FSB5 writing, [`BankEditor`], WAV reader
 //! * [`vorbis`] — setup-header table, Ogg mux/demux, FSB ↔ Ogg
@@ -12,6 +13,7 @@
 //!
 //! Default features enable pure-Rust encode + decode (no proprietary DLLs).
 
+pub mod error;
 pub mod fsb;
 pub mod fsb_write;
 pub mod vorbis;
@@ -20,6 +22,7 @@ pub mod vorbis_encode;
 #[cfg(feature = "decoder-rust")]
 pub mod vorbis_decode;
 
+pub use error::{format_error_chain, RamodError};
 pub use fsb::{
     Chunk, ChunkType, Fsb5, FsbError, FsbOpenError, Sample, SoundFormat, VorbisData, VorbisPacket,
 };
