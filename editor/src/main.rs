@@ -41,6 +41,7 @@ struct RamodEditorApp {
     search: String,
     selected_event: Option<String>,
     live_update: bool,
+    spatial: bool,
     platform: String,
     locale: String,
     project_name: String,
@@ -56,6 +57,7 @@ impl RamodEditorApp {
             search: String::new(),
             selected_event: None,
             live_update: false,
+            spatial: false,
             platform: "Desktop".into(),
             locale: String::new(),
             project_name: "Untitled — Event Editor".into(),
@@ -163,10 +165,7 @@ impl eframe::App for RamodEditorApp {
                         match self.browser_tab {
                             BrowserTab::Events => {
                                 if let Some(name) = &self.selected_event {
-                                    let selected = true;
-                                    if ui.selectable_label(selected, name).clicked() {
-                                        // already selected
-                                    }
+                                    let _ = ui.selectable_label(true, name);
                                 } else {
                                     ui.weak("(no events — Create → New Event)");
                                 }
@@ -186,20 +185,14 @@ impl eframe::App for RamodEditorApp {
                             self.selected_event = Some("event:/new_event".into());
                             self.browser_tab = BrowserTab::Events;
                         }
-                        if ui.button("New Folder").clicked() {
-                            // placeholder
-                        }
+                        let _ = ui.button("New Folder");
                         let _ = ui.button("Flatten");
                     });
                     ui.separator();
                     ui.add_space(4.0);
-                    if self.selected_event.is_some() {
+                    if let Some(name) = &self.selected_event {
                         ui.label("Properties");
-                        ui.label(
-                            egui::RichText::new(self.selected_event.as_deref().unwrap_or(""))
-                                .monospace()
-                                .small(),
-                        );
+                        ui.label(egui::RichText::new(name).monospace().small());
                     } else {
                         ui.weak("Select an item to view its properties");
                     }
@@ -215,7 +208,7 @@ impl eframe::App for RamodEditorApp {
                 ui.separator();
                 if self.selected_event.is_some() {
                     ui.label("3D");
-                    ui.checkbox(&mut true_placeholder(), "Spatial");
+                    ui.checkbox(&mut self.spatial, "Spatial");
                     ui.label("Parameters");
                     ui.weak("(none)");
                     ui.label("Buses");
@@ -227,40 +220,41 @@ impl eframe::App for RamodEditorApp {
 
         // ---- Center: transport + canvas + inspector -------------------------
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Tab strip
             ui.horizontal(|ui| {
                 ui.selectable_label(true, "Editor");
                 let _ = ui.button("+");
             });
             ui.separator();
 
-            // Transport
             ui.horizontal(|ui| {
-                let stop = ui.add(egui::Button::new("⏹").selected(matches!(
-                    self.transport,
-                    TransportState::Stopped
-                )));
-                if stop.clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("⏹")
+                            .selected(matches!(self.transport, TransportState::Stopped)),
+                    )
+                    .clicked()
+                {
                     self.transport = TransportState::Stopped;
                     self.time_secs = 0.0;
                 }
 
-                let play_text = egui::RichText::new("▶").color(egui::Color32::from_rgb(220, 180, 40));
+                let play_text =
+                    egui::RichText::new("▶").color(egui::Color32::from_rgb(220, 180, 40));
                 if ui
-                    .add(egui::Button::new(play_text).selected(matches!(
-                        self.transport,
-                        TransportState::Playing
-                    )))
+                    .add(
+                        egui::Button::new(play_text)
+                            .selected(matches!(self.transport, TransportState::Playing)),
+                    )
                     .clicked()
                 {
                     self.transport = TransportState::Playing;
                 }
 
                 if ui
-                    .add(egui::Button::new("⏸").selected(matches!(
-                        self.transport,
-                        TransportState::Paused
-                    )))
+                    .add(
+                        egui::Button::new("⏸")
+                            .selected(matches!(self.transport, TransportState::Paused)),
+                    )
                     .clicked()
                 {
                     self.transport = TransportState::Paused;
@@ -285,7 +279,6 @@ impl eframe::App for RamodEditorApp {
 
             ui.add_space(6.0);
 
-            // Main canvas (timeline placeholder)
             let canvas_h = (ui.available_height() - 80.0).max(120.0);
             egui::Frame::NONE
                 .fill(egui::Color32::from_rgb(28, 28, 28))
@@ -307,7 +300,6 @@ impl eframe::App for RamodEditorApp {
 
             ui.add_space(4.0);
 
-            // Bottom inspector strip
             egui::Frame::NONE
                 .fill(egui::Color32::from_rgb(18, 18, 18))
                 .inner_margin(8.0)
@@ -317,20 +309,10 @@ impl eframe::App for RamodEditorApp {
                 });
         });
 
-        // Fake clock while playing
         if matches!(self.transport, TransportState::Playing) {
             self.time_secs += ctx.input(|i| i.stable_dt);
             ctx.request_repaint();
         }
-    }
-}
-
-fn true_placeholder() -> bool {
-    // egui checkbox needs &mut bool; spatial toggle is UI-only for now
-    static mut V: bool = false;
-    // SAFETY: single-threaded UI
-    unsafe {
-        V
     }
 }
 
