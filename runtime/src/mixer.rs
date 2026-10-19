@@ -32,7 +32,6 @@ impl Meter {
             sum_sq += s * s;
         }
         let rms = (sum_sq / samples.len() as f32).sqrt();
-        // Fast attack, slow release
         self.peak = if peak > self.peak {
             peak
         } else {
@@ -60,7 +59,6 @@ pub struct Bus {
     pub solo: bool,
     pub inserts: Vec<InsertEffect>,
     pub meter: Meter,
-    /// Working buffer for this bus (filled during mix).
     pub(crate) buffer: Vec<f32>,
     pub(crate) effect_state: Vec<EffectState>,
 }
@@ -90,13 +88,11 @@ impl Bus {
     }
 }
 
-/// Mixer graph: buses + routing of voice output to a leaf bus.
 #[derive(Debug)]
 pub struct Mixer {
     buses: HashMap<u32, Bus>,
     next_id: u32,
     master_id: BusId,
-    /// voice_id → bus_id (default Master).
     voice_route: HashMap<u64, BusId>,
     default_bus: BusId,
 }
@@ -110,8 +106,7 @@ impl Mixer {
             voice_route: HashMap::new(),
             default_bus: BusId(0),
         };
-        let master = Bus::new(BusId(0), "Master", None);
-        m.buses.insert(0, master);
+        m.buses.insert(0, Bus::new(BusId(0), "Master", None));
         let sfx = m.add_bus("SFX", Some(BusId(0)));
         let _music = m.add_bus("Music", Some(BusId(0)));
         m.default_bus = sfx;
@@ -185,25 +180,19 @@ impl Mixer {
             .unwrap_or(self.default_bus)
     }
 
-    /// Effective linear gain for a bus considering mute/solo and parents.
-    pub fn effective_gain(&self, id: BusId) -> f32 {
+    /// Local gain only (mute/solo/volume). Parent gains applied when parent processes.
+    fn local_gain(&self, id: BusId) -> f32 {
         let any_solo = self.any_solo();
-        let mut gain = 1.0f32;
-        let mut cur = Some(id);
-        while let Some(cid) = cur {
-            let Some(b) = self.buses.get(&cid.0) else {
-                break;
-            };
-            if b.mute {
-                return 0.0;
-            }
-            if any_solo && !self.solo_path(cid) {
-                return 0.0;
-            }
-            gain *= b.volume_linear();
-            cur = b.parent;
+        let Some(b) = self.buses.get(&id.0) else {
+            return 0.0;
+        };
+        if b.mute {
+            return 0.0;
         }
-        gain
+        if any_solo && !self.solo_path(id) {
+            return 0.0;
+        }
+        b.volume_linear()
     }
 
     fn solo_path(&self, id: BusId) -> bool {
@@ -220,7 +209,6 @@ impl Mixer {
         false
     }
 
-    /// Clear leaf buffers; size = frames * channels.
     pub fn prepare(&mut self, frames: usize, channels: usize) {
         let n = frames * channels;
         for b in self.buses.values_mut() {
@@ -229,7 +217,6 @@ impl Mixer {
         }
     }
 
-    /// Accumulate a voice buffer into its routed bus (pre bus gain).
     pub fn accumulate_voice(&mut self, voice_id: u64, voice_out: &[f32]) {
         let bus_id = self.bus_for_voice(voice_id);
         if let Some(b) = self.buses.get_mut(&bus_id.0) {
@@ -240,22 +227,19 @@ impl Mixer {
         }
     }
 
-    /// Fold children into parents, apply inserts + gain, write Master to `out`.
     pub fn finish(&mut self, out: &mut [f32], channels: usize, sample_rate: u32) {
-        // Process non-master buses first (children before parents).
-        // Simple approach: process all non-master, sum into parent, then master.
         let mut order: Vec<u32> = self.buses.keys().copied().filter(|id| *id != 0).collect();
         order.sort_unstable();
 
         for id in order {
             let parent = self.buses.get(&id).and_then(|b| b.parent);
-            // Apply inserts + meter on this bus buffer (clone to avoid borrow issues)
             let (mut buf, inserts, mut states) = {
                 let b = self.buses.get_mut(&id).unwrap();
-                let buf = std::mem::take(&mut b.buffer);
-                let inserts = b.inserts.clone();
-                let states = std::mem::take(&mut b.effect_state);
-                (buf, inserts, states)
+                (
+                    std::mem::take(&mut b.buffer),
+                    b.inserts.clone(),
+                    std::mem::take(&mut b.effect_state),
+                )
             };
             while states.len() < inserts.len() {
                 states.push(EffectState::default());
@@ -263,15 +247,13 @@ impl Mixer {
             for (fx, st) in inserts.iter().zip(states.iter_mut()) {
                 process_effect(fx, st, &mut buf, channels, sample_rate);
             }
-            let gain = self.effective_gain(BusId(id));
+            let gain = self.local_gain(BusId(id));
             for s in buf.iter_mut() {
                 *s *= gain;
             }
-            // Meter
             if let Some(b) = self.buses.get_mut(&id) {
                 b.meter.update(&buf);
                 b.effect_state = states;
-                // Route to parent
                 if let Some(pid) = parent {
                     if let Some(p) = self.buses.get_mut(&pid.0) {
                         let n = p.buffer.len().min(buf.len());
@@ -284,7 +266,6 @@ impl Mixer {
             }
         }
 
-        // Master
         let master = self.buses.get_mut(&0).unwrap();
         let mut buf = std::mem::take(&mut master.buffer);
         let inserts = master.inserts.clone();
@@ -295,31 +276,29 @@ impl Mixer {
         for (fx, st) in inserts.iter().zip(states.iter_mut()) {
             process_effect(fx, st, &mut buf, channels, sample_rate);
         }
-        let gain = if master.mute {
-            0.0
-        } else {
-            10f32.powf(master.volume_db / 20.0)
-        };
+        let gain = self.local_gain(BusId(0));
         for s in buf.iter_mut() {
             *s *= gain;
         }
-        master.meter.update(&buf);
-        master.effect_state = states;
+        if let Some(master) = self.buses.get_mut(&0) {
+            master.meter.update(&buf);
+            master.effect_state = states;
+        }
 
         let n = out.len().min(buf.len());
         out[..n].copy_from_slice(&buf[..n]);
         if n < out.len() {
             out[n..].fill(0.0);
         }
-        master.buffer = buf;
+        if let Some(master) = self.buses.get_mut(&0) {
+            master.buffer = buf;
+        }
     }
 }
 
-/// Named mixer snapshot (bus volume targets).
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub name: String,
-    /// bus id → volume_db
     pub volumes: HashMap<u32, f32>,
 }
 
@@ -336,11 +315,9 @@ impl Snapshot {
     }
 }
 
-/// Snapshot bank + blend weight toward a target snapshot.
 #[derive(Debug, Default)]
 pub struct SnapshotPlayer {
     snapshots: HashMap<String, Snapshot>,
-    /// Current blend: name + weight 0..1 applied on top of base volumes.
     active: Option<(String, f32)>,
     base_volumes: HashMap<u32, f32>,
 }
@@ -367,7 +344,6 @@ impl SnapshotPlayer {
         self.active = None;
     }
 
-    /// Apply blended volumes onto mixer.
     pub fn apply(&self, mixer: &mut Mixer) {
         let Some((ref name, w)) = self.active else {
             return;

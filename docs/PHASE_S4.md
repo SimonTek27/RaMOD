@@ -16,7 +16,7 @@ Hierarchical mixer with mute/solo, insert DSP, snapshot blend, and metering.
 | S4.4 | `Snapshot` + `trigger_snapshot(name, weight)` |
 | S4.5 | Peak/RMS `Meter` on each bus |
 
-## API
+## Runtime API
 
 ```rust
 let master = rt.mixer().master_id();
@@ -39,8 +39,10 @@ let meter = rt.bus_meter(master);
 cargo test -p ramod_runtime --no-default-features
 ```
 
+Tests: `bus_mute_silences_output`, `snapshot_blends_volume`, `meter_updates_after_render`.
+
 ## Follow-ups
 
-- Per-voice bus routing from event metadata
-- Editor Mixer window with live meters (S4.5 UI)
-- More DSP (EQ bands, send/return)
+- Per-event bus routing
+- Editor Mixer window with live meter bars
+- EQ / send-return
