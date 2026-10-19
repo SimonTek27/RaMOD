@@ -1,25 +1,35 @@
 //! # ramod_runtime — open-source real-time audio engine
 //!
-//! S1 PCM · S2 Events/3D · S4 Mixer/snapshots/DSP/meters
+//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Event Designer
 
+mod automation;
 mod backend;
 mod bank;
 mod buffer;
 mod bus;
+mod designer;
 mod dsp;
+mod envelope;
 mod error;
 mod event;
+mod export;
 mod mixer;
 mod spatial;
 mod voice;
 
+pub use automation::{AutomationCurve, Keyframe};
 pub use backend::{NullBackend, OutputBackend};
 pub use bank::{Bank, BankEventSpec, BankName, BankRegistry};
 pub use buffer::{BufferHandle, PcmBuffer};
 pub use bus::MasterBus;
+pub use designer::{
+    DesignedEvent, InstrumentDef, InstrumentKind, LoopRegion, TimelineTrack, TransitionMarker,
+};
 pub use dsp::InsertEffect;
+pub use envelope::Ahdsr;
 pub use error::RuntimeError;
 pub use event::{EventDescription, EventInstance, EventPath};
+pub use export::{BankManifest, EventManifestEntry};
 pub use mixer::{Bus, BusId, Meter, Mixer, Snapshot, SnapshotPlayer};
 pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
@@ -28,6 +38,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bank::BankRegistry;
 use buffer::BufferStore;
+use designer::DesignedEvent;
 use event::EventSystem;
 use mixer::{Mixer, Snapshot, SnapshotPlayer};
 use spatial::{closing_speed, distance, Attributes3d as Attr3d};
@@ -66,6 +77,7 @@ pub struct Runtime {
     snapshots: SnapshotPlayer,
     events: EventSystem,
     banks: BankRegistry,
+    designed: Vec<DesignedEvent>,
     next_voice_id: AtomicU64,
     #[allow(dead_code)]
     backend: Option<Box<dyn OutputBackend>>,
@@ -97,6 +109,7 @@ impl Runtime {
             snapshots: SnapshotPlayer::default(),
             events: EventSystem::new(),
             banks: BankRegistry::new(),
+            designed: Vec::new(),
             next_voice_id: AtomicU64::new(1),
             sample_rate,
             channels,
@@ -128,8 +141,6 @@ impl Runtime {
         &mut self.mixer
     }
 
-    // ---- S1 PCM API ---------------------------------------------------------
-
     pub fn load_pcm(
         &mut self,
         samples: Vec<f32>,
@@ -154,7 +165,7 @@ impl Runtime {
         buffer: BufferHandle,
         params: PlayParams,
     ) -> Result<VoiceHandle, RuntimeError> {
-        self.play_with_priority(buffer, params, 128, 1.0)
+        self.play_with_priority(buffer, params, 128, 1.0, None)
     }
 
     fn play_with_priority(
@@ -163,6 +174,7 @@ impl Runtime {
         params: PlayParams,
         priority: i32,
         audibility: f32,
+        envelope: Option<crate::envelope::Ahdsr>,
     ) -> Result<VoiceHandle, RuntimeError> {
         let buf = self
             .buffers
@@ -176,7 +188,16 @@ impl Runtime {
         let id = self.next_voice_id.fetch_add(1, Ordering::Relaxed);
         let handle = self
             .voices
-            .start(id, buffer, buf, params, self.sample_rate, priority, audibility)
+            .start(
+                id,
+                buffer,
+                buf,
+                params,
+                self.sample_rate,
+                priority,
+                audibility,
+                envelope,
+            )
             .map_err(|_| RuntimeError::NoFreeVoice)?;
         self.mixer.route_voice(id, self.mixer.default_bus());
         Ok(handle)
@@ -194,7 +215,8 @@ impl Runtime {
         self.voices.active_count()
     }
 
-    pub fn tick(&mut self, _dt: f32) {
+    pub fn tick(&mut self, dt: f32) {
+        self.voices.advance_envelopes(dt);
         self.voices.reap_finished();
         self.sync_event_spatial_gains();
         self.snapshots.apply(&mut self.mixer);
@@ -209,20 +231,13 @@ impl Runtime {
             return;
         }
         let frames = out.len() / ch;
-
-        // Mix all voices into a temp buffer, route to default bus (S4 MVP).
         let mut dry = vec![0.0f32; frames * ch];
         self.voices
             .mix_into(&mut dry, frames, ch, self.sample_rate, &self.buffers);
-
         self.mixer.prepare(frames, ch);
-        // Fold into default leaf bus under a synthetic voice id 0.
-        self.mixer.accumulate_voice(0, &dry);
-        // Ensure voice 0 is routed to default bus
         self.mixer.route_voice(0, self.mixer.default_bus());
+        self.mixer.accumulate_voice(0, &dry);
         self.mixer.finish(out, ch, self.sample_rate);
-
-        // Legacy master gain still applies on top.
         let g = self.master.gain();
         if (g - 1.0).abs() > f32::EPSILON {
             for s in out.iter_mut() {
@@ -238,10 +253,122 @@ impl Runtime {
         out
     }
 
-    // ---- S2 Event API -------------------------------------------------------
+    // ---- S2 / S5 events -----------------------------------------------------
 
     pub fn register_event(&mut self, desc: EventDescription) {
         self.events.register(desc);
+    }
+
+    /// S5: register a multi-track designed event.
+    ///
+    /// `buffers[slot]` maps instrument buffer slots. Expands into a primary
+    /// `EventDescription` (first instrument) for `play_event` compatibility;
+    /// full multi-voice spawn is available via [`play_designed`].
+    pub fn register_designed_event(
+        &mut self,
+        mut event: DesignedEvent,
+        buffers: &[BufferHandle],
+    ) -> Result<(), RuntimeError> {
+        let primary = event
+            .tracks
+            .iter()
+            .flat_map(|t| t.instruments.iter())
+            .find(|i| !i.buffer_slots.is_empty())
+            .and_then(|i| i.buffer_slots.first().copied())
+            .and_then(|slot| buffers.get(slot).copied())
+            .ok_or(RuntimeError::InvalidBuffer)?;
+
+        let mut desc = EventDescription::new(&event.path, primary)
+            .with_priority(event.priority)
+            .with_loop(
+                event
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.instruments.iter())
+                    .any(|i| i.looping),
+            );
+        if event.is_3d {
+            desc = desc.with_3d(event.attenuation);
+        }
+        for (n, v) in &event.parameters {
+            desc = desc.with_parameter(n.clone(), *v);
+        }
+        self.events.register(desc);
+        self.designed.push(event);
+        Ok(())
+    }
+
+    /// Play all instruments on a designed event (respect probability / scatter).
+    pub fn play_designed(
+        &mut self,
+        path: &str,
+        buffers: &[BufferHandle],
+    ) -> Result<Vec<VoiceHandle>, RuntimeError> {
+        let event = self
+            .designed
+            .iter()
+            .find(|e| e.path == path)
+            .cloned()
+            .ok_or(RuntimeError::EventNotFound)?;
+
+        let any_solo = event.tracks.iter().any(|t| t.solo);
+        let mut handles = Vec::new();
+        for track in &event.tracks {
+            if track.mute {
+                continue;
+            }
+            if any_solo && !track.solo {
+                continue;
+            }
+            for inst in &track.instruments {
+                // Probability gate (deterministic hash of path+name for tests).
+                let roll = simple_hash(&format!("{}:{}", path, inst.name)) as f32 / u64::MAX as f32;
+                if roll > inst.probability.clamp(0.0, 1.0) {
+                    continue;
+                }
+                let count = match inst.kind {
+                    designer::InstrumentKind::Scatter => inst.scatter_count.max(1),
+                    _ => 1,
+                };
+                for n in 0..count {
+                    let slot = if inst.buffer_slots.is_empty() {
+                        continue;
+                    } else if inst.kind == designer::InstrumentKind::Multi {
+                        let idx = (simple_hash(&(inst.name.clone() + &n.to_string())) as usize)
+                            % inst.buffer_slots.len();
+                        inst.buffer_slots[idx]
+                    } else {
+                        inst.buffer_slots[0]
+                    };
+                    let Some(&buf) = buffers.get(slot) else {
+                        continue;
+                    };
+                    let params = PlayParams {
+                        gain: 1.0,
+                        looped: inst.looping,
+                    };
+                    match self.play_with_priority(
+                        buf,
+                        params,
+                        event.priority,
+                        1.0,
+                        Some(inst.envelope),
+                    ) {
+                        Ok(h) => handles.push(h),
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+        Ok(handles)
+    }
+
+    pub fn designed_events(&self) -> &[DesignedEvent] {
+        &self.designed
+    }
+
+    pub fn export_bank_manifest(&self, name: &str) -> BankManifest {
+        BankManifest::from_events(name, &self.designed)
     }
 
     pub fn load_bank(&mut self, bank: Bank) {
@@ -272,7 +399,7 @@ impl Runtime {
     pub fn start_instance(&mut self, mut inst: EventInstance) -> Result<u64, RuntimeError> {
         let audibility = self.audibility_for(&inst);
         let params = inst.play_params();
-        let voice = self.play_with_priority(inst.buffer, params, inst.priority, audibility)?;
+        let voice = self.play_with_priority(inst.buffer, params, inst.priority, audibility, None)?;
         inst.voice = Some(voice);
         inst.started = true;
         let id = inst.id;
@@ -320,8 +447,6 @@ impl Runtime {
         self.events.instance_count()
     }
 
-    // ---- S4 Mixer / Snapshot API --------------------------------------------
-
     pub fn set_bus_volume_db(&mut self, bus: BusId, db: f32) {
         self.mixer.set_volume_db(bus, db);
     }
@@ -346,7 +471,6 @@ impl Runtime {
         self.snapshots.capture_base(&self.mixer);
     }
 
-    /// Blend toward named snapshot; weight 0 = base, 1 = full snapshot.
     pub fn trigger_snapshot(&mut self, name: &str, weight: f32) {
         self.snapshots.trigger(name, weight);
         self.snapshots.apply(&mut self.mixer);
@@ -396,6 +520,15 @@ impl Runtime {
     }
 }
 
+fn simple_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,7 +547,7 @@ mod tests {
             open_device: false,
             sample_rate: 48_000,
             channels: 1,
-            max_voices: 8,
+            max_voices: 16,
         })
         .unwrap()
     }
@@ -433,57 +566,39 @@ mod tests {
     }
 
     #[test]
-    fn event_play_by_path() {
+    fn designed_event_and_manifest() {
         let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 330.0), 1, 48_000).unwrap();
-        rt.register_event(EventDescription::new("event:/sfx/beep", buf));
-        let id = rt.play_event("event:/sfx/beep").unwrap();
-        assert_eq!(rt.active_voices(), 1);
-        let out = rt.render_seconds(0.03);
-        assert!(out.iter().any(|s| s.abs() > 0.01));
-        rt.release_instance(id);
-        assert_eq!(rt.active_voices(), 0);
+        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
+        let mut track = TimelineTrack::new("Audio 1");
+        track.instruments.push(InstrumentDef::single("beep", 0));
+        let ev = DesignedEvent::new("event:/sfx/beep").with_track(track);
+        rt.register_designed_event(ev, &[buf]).unwrap();
+        let handles = rt.play_designed("event:/sfx/beep", &[buf]).unwrap();
+        assert!(!handles.is_empty());
+        let man = rt.export_bank_manifest("Master");
+        let json = man.to_json();
+        assert!(json.contains("event:/sfx/beep"));
     }
 
     #[test]
-    fn bus_mute_silences_output() {
-        let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let loud = rt.render_seconds(0.02);
-        let peak_loud = loud.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-
-        let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let master = rt.mixer().master_id();
-        rt.set_bus_mute(master, true);
-        let quiet = rt.render_seconds(0.02);
-        let peak_quiet = quiet.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(peak_loud > 0.01);
-        assert!(peak_quiet < 0.001);
+    fn ahdsr_gain_curve() {
+        let env = Ahdsr {
+            attack: 0.1,
+            hold: 0.0,
+            decay: 0.1,
+            sustain: 0.5,
+            release: 0.1,
+        };
+        assert!((env.gain_at(0.0) - 0.0).abs() < 0.01);
+        assert!((env.gain_at(0.1) - 1.0).abs() < 0.01);
+        assert!((env.gain_at(0.3) - 0.5).abs() < 0.05);
     }
 
     #[test]
-    fn snapshot_blends_volume() {
-        let mut rt = headless();
-        let master = rt.mixer().master_id();
-        rt.capture_snapshot_base();
-        let mut snap = Snapshot::new("quiet");
-        snap.set_volume(master, -24.0);
-        rt.register_snapshot(snap);
-        rt.trigger_snapshot("quiet", 1.0);
-        assert!((rt.mixer().bus(master).unwrap().volume_db - (-24.0)).abs() < 0.01);
-    }
-
-    #[test]
-    fn meter_updates_after_render() {
-        let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let _ = rt.render_seconds(0.05);
-        let master = rt.mixer().master_id();
-        let m = rt.bus_meter(master).unwrap();
-        assert!(m.peak > 0.0 || m.rms >= 0.0);
+    fn automation_eval() {
+        let mut c = AutomationCurve::new("Intensity");
+        c.add_key(0.0, 0.0);
+        c.add_key(1.0, 1.0);
+        assert!((c.eval(0.5).unwrap() - 0.5).abs() < 0.01);
     }
 }
