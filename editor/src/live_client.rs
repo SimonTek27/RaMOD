@@ -28,9 +28,6 @@ impl EditorLiveClient {
         let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
         let mut line = String::new();
         let _ = reader.read_line(&mut line);
-        if !line.contains("welcome") && !line.is_empty() {
-            // still accept
-        }
         Ok(Self {
             stream: w,
             connected: true,
