@@ -17,7 +17,6 @@ pub struct Project {
 pub struct EventEntry {
     pub path: String,
     pub bank: String,
-    /// Index into project.assets, if any.
     pub asset_index: Option<usize>,
     #[serde(default)]
     pub looping: bool,
@@ -29,7 +28,6 @@ pub struct EventEntry {
     pub min_distance: f32,
     #[serde(default = "default_max_dist")]
     pub max_distance: f32,
-    /// Named parameters (name → default).
     #[serde(default)]
     pub parameters: Vec<(String, f32)>,
 }
@@ -52,9 +50,9 @@ pub struct BankEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
     pub name: String,
-    /// Optional path to a WAV on disk (editor resolves for Play).
+    /// Path to a WAV on disk.
     pub source_path: Option<String>,
-    /// Synthetic tone for demo when no file (Hz). None = silence buffer.
+    /// Synthetic tone (Hz) when no file.
     pub demo_freq_hz: Option<f32>,
 }
 
@@ -123,5 +121,20 @@ impl Project {
             source_path: None,
             demo_freq_hz: Some(freq),
         });
+    }
+
+    /// Register a file-backed asset (WAV). Returns index.
+    pub fn add_asset_file(&mut self, path: &Path) -> usize {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("asset")
+            .to_string();
+        self.assets.push(AssetEntry {
+            name,
+            source_path: Some(path.to_string_lossy().into_owned()),
+            demo_freq_hz: None,
+        });
+        self.assets.len() - 1
     }
 }

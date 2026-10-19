@@ -1,8 +1,8 @@
-//! egui Waveform / GoldWave-style panel (S9 UI).
+//! egui Waveform / GoldWave-style panel (S9 UI) + WAV import.
 
 use egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use ramod_waveform::{PeakMinMax, WaveBuffer};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct WaveformPanel {
     pub wave: Option<WaveBuffer>,
@@ -11,7 +11,10 @@ pub struct WaveformPanel {
     pub status: String,
     drag_start: Option<f32>,
     export_path: String,
+    import_path: String,
     gain_db: f32,
+    /// Path of last imported file (for project registration).
+    pub last_import_path: Option<PathBuf>,
 }
 
 impl Default for WaveformPanel {
@@ -23,7 +26,9 @@ impl Default for WaveformPanel {
             status: "Load or generate a waveform".into(),
             drag_start: None,
             export_path: "export.wav".into(),
+            import_path: String::new(),
             gain_db: 0.0,
+            last_import_path: None,
         }
     }
 }
@@ -42,13 +47,38 @@ impl WaveformPanel {
             Ok(mut w) => {
                 w.select_all();
                 self.wave = Some(w);
+                self.last_import_path = None;
                 self.status = "Demo tone 440 Hz (0.5 s)".into();
             }
             Err(_) => self.status = "Failed to create demo tone".into(),
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui) {
+    pub fn import_wav(&mut self, path: &Path) -> bool {
+        match WaveBuffer::from_wav(path) {
+            Ok(w) => {
+                self.status = format!(
+                    "Imported {} ({} ch, {} Hz, {:.2}s)",
+                    path.display(),
+                    w.channels,
+                    w.sample_rate,
+                    w.duration_secs()
+                );
+                self.import_path = path.to_string_lossy().into_owned();
+                self.last_import_path = Some(path.to_path_buf());
+                self.wave = Some(w);
+                true
+            }
+            Err(e) => {
+                self.status = format!("Import failed: {e}");
+                false
+            }
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut Ui) -> WaveformAction {
+        let mut action = WaveformAction::None;
+
         ui.horizontal(|ui| {
             ui.heading("Waveform");
             if ui.button("Demo tone").clicked() {
@@ -63,6 +93,31 @@ impl WaveformPanel {
             self.toolbar(ui);
         });
 
+        ui.horizontal(|ui| {
+            ui.label("Import WAV");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.import_path)
+                    .desired_width(280.0)
+                    .hint_text("path/to/file.wav"),
+            );
+            if ui.button("Load").clicked() {
+                let p = PathBuf::from(self.import_path.trim());
+                if self.import_wav(&p) {
+                    action = WaveformAction::Imported(p);
+                }
+            }
+            if ui
+                .button("Load + add to Assets")
+                .on_hover_text("Import WAV and register in project Assets")
+                .clicked()
+            {
+                let p = PathBuf::from(self.import_path.trim());
+                if self.import_wav(&p) {
+                    action = WaveformAction::ImportedAndRegister(p);
+                }
+            }
+        });
+
         ui.separator();
 
         let height = 120.0;
@@ -70,7 +125,6 @@ impl WaveformPanel {
             ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::click_and_drag());
         let rect = response.rect;
 
-        // Update selection from drag before paint
         if response.drag_started() {
             if let Some(pos) = response.interact_pointer_pos() {
                 self.drag_start = Some(((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
@@ -108,7 +162,7 @@ impl WaveformPanel {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "No waveform — click Demo tone",
+                "No waveform — Import WAV or Demo tone",
                 egui::FontId::proportional(14.0),
                 Color32::from_rgb(120, 120, 130),
             );
@@ -145,6 +199,8 @@ impl WaveformPanel {
                 self.export(true);
             }
         });
+
+        action
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
@@ -280,4 +336,11 @@ impl WaveformPanel {
             Err(e) => self.status = format!("Export failed: {e}"),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum WaveformAction {
+    None,
+    Imported(PathBuf),
+    ImportedAndRegister(PathBuf),
 }
