@@ -1,0 +1,18 @@
+[package]
+name = "ramod_editor"
+version = "0.1.0"
+edition = "2021"
+description = "RaMOD Event Editor — open-source FMOD-style authoring UI (egui)"
+license.workspace = true
+repository.workspace = true
+publish = false
+rust-version = "1.85"
+
+[[bin]]
+name = "ramod_editor"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31", default-features = true }
+egui = "0.31"
+ramod = { path = "..", default-features = false }
