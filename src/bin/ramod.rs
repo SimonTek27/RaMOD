@@ -1,19 +1,18 @@
-//! RaMOD command-line interface (Phase 0).
+//! RaMOD command-line interface (Phase 0 / S0).
 //!
 //! Subcommands:
 //! - `list`    — list samples in a bank
 //! - `info`    — detailed bank / sample info
 //! - `extract` — extract one sample to WAV (PCM) or Ogg (Vorbis)
 //! - `build`   — build an FSB5 bank from one or more WAV files
-//!
-//! Future: `edit`, `convert` (see ROADMAP.md item 6).
+//! - `edit`    — in-place metadata edits (rename, loop, frequency)
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use ramod::{build_ogg, Fsb5, Fsb5Builder, SoundFormat, Wav};
+use ramod::{build_ogg, BankEditor, Fsb5, Fsb5Builder, SoundFormat, Wav};
 
 fn main() {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
@@ -28,6 +27,7 @@ fn main() {
         "info" => cmd_info(&args),
         "extract" => cmd_extract(&args),
         "build" => cmd_build(&args),
+        "edit" => cmd_edit(&args),
         "help" | "-h" | "--help" => {
             print_usage();
             0
@@ -50,11 +50,20 @@ fn print_usage() {
            ramod info <bank.fsb> [--index N]\n\
            ramod extract <bank.fsb> --index N --out <file>\n\
            ramod build --out <bank.fsb> <file1.wav> [file2.wav ...]\n\
+           ramod edit <bank.fsb> --index N [options]\n\
          \n\
-         extract: PCM samples → WAV, Vorbis samples → Ogg\n\
-         build:   WAV files → FSB5 PCM16 bank (sample names from file stems)\n\
+         edit options:\n\
+           --name <str>           rename sample\n\
+           --loop <start>:<end>   set loop points (sample frames)\n\
+           --clear-loop           remove loop\n\
+           --frequency <hz>       set sample rate metadata\n\
+           --out <bank.fsb>       output path (default: overwrite input)\n\
          \n\
-         See DESIGN.md / ROADMAP.md / ARCHITECTURE.md for the long-term plan."
+         extract: PCM → WAV, Vorbis → Ogg\n\
+         build:   WAV → FSB5 PCM16 (names from file stems)\n\
+         edit:    metadata only; sample payload unchanged\n\
+         \n\
+         See docs/PHASE0.md and docs/STUDIO_DEV_PLAN.md."
     );
 }
 
@@ -331,4 +340,200 @@ fn cmd_build(args: &[String]) -> i32 {
         out_path.display()
     );
     0
+}
+
+/// In-place metadata edit via [`BankEditor`].
+///
+/// ```text
+/// ramod edit bank.fsb --index 0 --name explosion --loop 0:12000 --out out.fsb
+/// ```
+fn cmd_edit(args: &[String]) -> i32 {
+    let mut path: Option<&str> = None;
+    let mut index: Option<usize> = None;
+    let mut name: Option<String> = None;
+    let mut loop_pts: Option<(u32, u32)> = None;
+    let mut clear_loop = false;
+    let mut frequency: Option<u32> = None;
+    let mut out: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--index" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("edit: --index needs a value");
+                    return 2;
+                };
+                index = match v.parse() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        eprintln!("edit: invalid index {v}");
+                        return 2;
+                    }
+                };
+            }
+            "--name" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("edit: --name needs a value");
+                    return 2;
+                };
+                name = Some(v.clone());
+            }
+            "--loop" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("edit: --loop needs start:end");
+                    return 2;
+                };
+                loop_pts = match parse_loop_spec(v) {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        eprintln!("edit: {e}");
+                        return 2;
+                    }
+                };
+            }
+            "--clear-loop" => {
+                clear_loop = true;
+            }
+            "--frequency" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("edit: --frequency needs a value");
+                    return 2;
+                };
+                frequency = match v.parse() {
+                    Ok(n) if n > 0 => Some(n),
+                    _ => {
+                        eprintln!("edit: invalid frequency {v}");
+                        return 2;
+                    }
+                };
+            }
+            "--out" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("edit: --out needs a path");
+                    return 2;
+                };
+                out = Some(PathBuf::from(v));
+            }
+            p if !p.starts_with('-') && path.is_none() => path = Some(p),
+            other => {
+                eprintln!("edit: unexpected argument {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+
+    let Some(path) = path else {
+        eprintln!("edit: missing <bank.fsb>");
+        return 2;
+    };
+    let Some(idx) = index else {
+        eprintln!("edit: require --index N");
+        return 2;
+    };
+
+    if name.is_none() && loop_pts.is_none() && !clear_loop && frequency.is_none() {
+        eprintln!("edit: nothing to change (use --name, --loop, --clear-loop, and/or --frequency)");
+        return 2;
+    }
+    if clear_loop && loop_pts.is_some() {
+        eprintln!("edit: --clear-loop and --loop are mutually exclusive");
+        return 2;
+    }
+
+    let bank = match load_bank(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if idx >= bank.len() {
+        eprintln!("edit: index {idx} out of range (0..{})", bank.len());
+        return 1;
+    }
+
+    let old_name = bank.samples[idx].name.clone();
+    let mut editor = BankEditor::from_bank(&bank);
+    let mut changes: Vec<String> = Vec::new();
+
+    if let Some(ref n) = name {
+        if !editor.rename(idx, n.clone()) {
+            eprintln!("edit: rename failed");
+            return 1;
+        }
+        changes.push(format!("name: {old_name} → {n}"));
+    }
+    if let Some((start, end)) = loop_pts {
+        if start > end {
+            eprintln!("edit: loop start ({start}) > end ({end})");
+            return 2;
+        }
+        if !editor.set_loop(idx, start, end) {
+            eprintln!("edit: set_loop failed");
+            return 1;
+        }
+        changes.push(format!("loop: {start}..{end}"));
+    }
+    if clear_loop {
+        if !editor.clear_loop(idx) {
+            eprintln!("edit: clear_loop failed");
+            return 1;
+        }
+        changes.push("loop: cleared".into());
+    }
+    if let Some(hz) = frequency {
+        if !editor.set_frequency(idx, hz) {
+            eprintln!("edit: set_frequency failed");
+            return 1;
+        }
+        changes.push(format!("frequency: {hz} Hz"));
+    }
+
+    let bytes = match editor.build() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("edit: rebuild bank: {e}");
+            return 1;
+        }
+    };
+
+    // Sanity: re-parse
+    if let Err(e) = Fsb5::parse(&bytes) {
+        eprintln!("edit: rebuilt bank does not parse: {e}");
+        return 1;
+    }
+
+    let out_path = out.unwrap_or_else(|| PathBuf::from(path));
+    if let Err(e) = fs::write(&out_path, &bytes) {
+        eprintln!("edit: write {}: {e}", out_path.display());
+        return 1;
+    }
+
+    println!(
+        "edited sample [{idx}] in {} ({} bytes)",
+        out_path.display(),
+        bytes.len()
+    );
+    for c in changes {
+        println!("  {c}");
+    }
+    0
+}
+
+fn parse_loop_spec(spec: &str) -> Result<(u32, u32), String> {
+    let (a, b) = spec
+        .split_once(':')
+        .ok_or_else(|| format!("loop must be start:end, got `{spec}`"))?;
+    let start: u32 = a
+        .parse()
+        .map_err(|_| format!("invalid loop start `{a}`"))?;
+    let end: u32 = b.parse().map_err(|_| format!("invalid loop end `{b}`"))?;
+    Ok((start, end))
 }
