@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "editor"]
+members = [".", "editor", "runtime"]
 resolver = "2"
 
 [workspace.package]
@@ -18,15 +18,12 @@ repository = "https://github.com/SimonTek27/RaMOD"
 keywords = ["fsb5", "vorbis", "audio", "middleware", "modding", "bevy"]
 categories = ["multimedia::audio", "parser-implementations", "command-line-utilities"]
 rust-version = "1.85"
-exclude = ["tools/**", "editor/**"]
+exclude = ["tools/**", "editor/**", "runtime/**"]
 
 [features]
 default = ["encoder-rust", "decoder-rust"]
-# Pure-Rust Vorbis encoder (rusty_vorbis). Cross-platform, no C/FFI.
 encoder-rust = ["dep:rusty_vorbis"]
-# Pure-Rust Vorbis decoder (lewton).
 decoder-rust = ["dep:lewton"]
-# Legacy Windows path: load libfsbvorbis64.dll at runtime (no cargo dep).
 encoder-dll = []
 
 [dependencies]
