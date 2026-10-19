@@ -9,5 +9,12 @@ publish = false
 rust-version = "1.85"
 
 [dependencies]
-
-[dev-dependencies]
+# Unified decoder: WAV, MP3, Ogg Vorbis, FLAC (pure-Rust friendly)
+symphonia = { version = "0.5", default-features = false, features = [
+    "wav",
+    "mp3",
+    "ogg",
+    "vorbis",
+    "flac",
+    "pcm",
+] }

@@ -1,15 +1,23 @@
-//! WAV import (PCM 16-bit / IEEE float, little-endian).
+//! Audio import — WAV / MP3 / OGG Vorbis / FLAC via Symphonia.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+
+use symphonia::core::audio::{AudioBufferRef, Signal};
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 use crate::{WaveBuffer, WaveError};
 
 #[derive(Debug)]
 pub enum ImportError {
     Io(std::io::Error),
-    Format(&'static str),
+    Format(String),
+    Decode(String),
     Wave(WaveError),
 }
 
@@ -18,6 +26,7 @@ impl std::fmt::Display for ImportError {
         match self {
             ImportError::Io(e) => write!(f, "io: {e}"),
             ImportError::Format(m) => write!(f, "format: {m}"),
+            ImportError::Decode(m) => write!(f, "decode: {m}"),
             ImportError::Wave(e) => write!(f, "wave: {e}"),
         }
     }
@@ -31,91 +40,161 @@ impl From<std::io::Error> for ImportError {
     }
 }
 
-/// Load a WAV file into a [`WaveBuffer`].
-pub fn read_wav(path: &Path) -> Result<WaveBuffer, ImportError> {
-    let mut f = File::open(path)?;
-    let mut header = [0u8; 12];
-    f.read_exact(&mut header)?;
-    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
-        return Err(ImportError::Format("not a RIFF/WAVE file"));
+/// Extensions accepted by the editor / DnD.
+pub fn is_supported_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "wav" | "wave" | "mp3" | "ogg" | "oga" | "flac"
+    )
+}
+
+/// Load any supported audio file into a [`WaveBuffer`] (interleaved f32).
+pub fn read_audio(path: &Path) -> Result<WaveBuffer, ImportError> {
+    let file = File::open(path)?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
     }
 
-    let mut channels = 0u16;
-    let mut sample_rate = 0u32;
-    let mut bits = 0u16;
-    let mut audio_format = 0u16; // 1 = PCM, 3 = IEEE float
-    let mut data: Vec<u8> = Vec::new();
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| ImportError::Format(e.to_string()))?;
+
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| ImportError::Format("no decodable audio track".into()))?
+        .clone();
+
+    let track_id = track.id;
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| ImportError::Format("unknown sample rate".into()))?;
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count() as u16)
+        .unwrap_or(1);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| ImportError::Decode(e.to_string()))?;
+
+    let mut interleaved: Vec<f32> = Vec::new();
 
     loop {
-        let mut chunk_hdr = [0u8; 8];
-        match f.read_exact(&mut chunk_hdr) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e.into()),
-        }
-        let id = &chunk_hdr[0..4];
-        let size = u32::from_le_bytes(chunk_hdr[4..8].try_into().unwrap()) as u64;
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
+            Err(SymphoniaError::IoError(e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymphoniaError::IoError(e)) => return Err(ImportError::Io(e)),
+            Err(e) => {
+                // End of stream variants
+                let msg = e.to_string();
+                if msg.contains("end of stream") || msg.contains("eof") {
+                    break;
+                }
+                return Err(ImportError::Decode(msg));
+            }
+        };
 
-        if id == b"fmt " {
-            let mut fmt = vec![0u8; size as usize];
-            f.read_exact(&mut fmt)?;
-            if fmt.len() < 16 {
-                return Err(ImportError::Format("fmt chunk too small"));
-            }
-            audio_format = u16::from_le_bytes(fmt[0..2].try_into().unwrap());
-            channels = u16::from_le_bytes(fmt[2..4].try_into().unwrap());
-            sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
-            bits = u16::from_le_bytes(fmt[14..16].try_into().unwrap());
-            // pad byte if odd size
-            if size % 2 == 1 {
-                let _ = f.seek(SeekFrom::Current(1));
-            }
-        } else if id == b"data" {
-            data.resize(size as usize, 0);
-            f.read_exact(&mut data)?;
-            if size % 2 == 1 {
-                let _ = f.seek(SeekFrom::Current(1));
-            }
-            break; // got data
-        } else {
-            f.seek(SeekFrom::Current(size as i64))?;
-            if size % 2 == 1 {
-                let _ = f.seek(SeekFrom::Current(1));
-            }
+        if packet.track_id() != track_id {
+            continue;
         }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(e) => return Err(ImportError::Decode(e.to_string())),
+        };
+
+        append_decoded(&mut interleaved, decoded, channels);
     }
 
-    if channels == 0 || sample_rate == 0 || data.is_empty() {
-        return Err(ImportError::Format("missing fmt/data"));
+    if interleaved.is_empty() {
+        return Err(ImportError::Decode("no samples decoded".into()));
     }
 
-    let samples = match (audio_format, bits) {
-        (1, 16) => {
-            let mut out = Vec::with_capacity(data.len() / 2);
-            for chunk in data.chunks_exact(2) {
-                let v = i16::from_le_bytes([chunk[0], chunk[1]]);
-                out.push(v as f32 / 32768.0);
-            }
-            out
-        }
-        (1, 8) => {
-            // unsigned 8-bit
-            data.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect()
-        }
-        (3, 32) => {
-            let mut out = Vec::with_capacity(data.len() / 4);
-            for chunk in data.chunks_exact(4) {
-                let v = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                out.push(v);
-            }
-            out
-        }
-        _ => {
-            return Err(ImportError::Format(
-                "unsupported format (need PCM16/PCM8 or float32)",
-            ))
-        }
-    };
+    // Ensure channel multiple
+    let ch = channels.max(1) as usize;
+    let n = interleaved.len() - (interleaved.len() % ch);
+    interleaved.truncate(n);
 
-    WaveBuffer::new(samples, channels, sample_rate).map_err(ImportError::Wave)
+    WaveBuffer::new(interleaved, channels.max(1), sample_rate).map_err(ImportError::Wave)
+}
+
+/// Back-compat alias.
+pub fn read_wav(path: &Path) -> Result<WaveBuffer, ImportError> {
+    read_audio(path)
+}
+
+fn append_decoded(out: &mut Vec<f32>, decoded: AudioBufferRef<'_>, channels: u16) {
+    let ch = channels.max(1) as usize;
+    match decoded {
+        AudioBufferRef::F32(buf) => {
+            let frames = buf.frames();
+            for f in 0..frames {
+                for c in 0..ch.min(buf.spec().channels.count()) {
+                    out.push(buf.chan(c)[f]);
+                }
+                // pad if fewer planes than expected
+                for _ in buf.spec().channels.count()..ch {
+                    out.push(0.0);
+                }
+            }
+        }
+        AudioBufferRef::U8(buf) => plane_to_f32(out, buf, |s| (s as f32 - 128.0) / 128.0, ch),
+        AudioBufferRef::U16(buf) => {
+            plane_to_f32(out, buf, |s| (s as f32 / 65535.0) * 2.0 - 1.0, ch)
+        }
+        AudioBufferRef::U24(buf) => {
+            plane_to_f32(out, buf, |s| s.inner() as f32 / 8_388_607.0, ch)
+        }
+        AudioBufferRef::U32(buf) => {
+            plane_to_f32(out, buf, |s| (s as f32 / 4_294_967_295.0) * 2.0 - 1.0, ch)
+        }
+        AudioBufferRef::S8(buf) => plane_to_f32(out, buf, |s| s as f32 / 128.0, ch),
+        AudioBufferRef::S16(buf) => plane_to_f32(out, buf, |s| s as f32 / 32768.0, ch),
+        AudioBufferRef::S24(buf) => {
+            plane_to_f32(out, buf, |s| s.inner() as f32 / 8_388_608.0, ch)
+        }
+        AudioBufferRef::S32(buf) => plane_to_f32(out, buf, |s| s as f32 / 2_147_483_648.0, ch),
+        AudioBufferRef::F64(buf) => plane_to_f32(out, buf, |s| s as f32, ch),
+    }
+}
+
+fn plane_to_f32<S: Copy>(
+    out: &mut Vec<f32>,
+    buf: symphonia::core::audio::AudioBuffer<S>,
+    conv: impl Fn(S) -> f32,
+    ch: usize,
+) {
+    let frames = buf.frames();
+    let planes = buf.spec().channels.count();
+    for f in 0..frames {
+        for c in 0..ch.min(planes) {
+            out.push(conv(buf.chan(c)[f]));
+        }
+        for _ in planes..ch {
+            out.push(0.0);
+        }
+    }
 }
