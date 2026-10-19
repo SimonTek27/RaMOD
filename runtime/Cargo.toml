@@ -10,8 +10,13 @@ rust-version = "1.85"
 
 [features]
 default = ["backend-cpal"]
-# Real device output via cpal. Disable for headless / CI (null backend only).
 backend-cpal = ["dep:cpal"]
+# TCP Live Update server/client (std only).
+live-update = []
 
 [dependencies]
 cpal = { version = "0.15", optional = true }
+
+[[example]]
+name = "live_update_demo"
+required-features = ["live-update"]
