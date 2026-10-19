@@ -1,19 +1,21 @@
-//! RaMOD Event Editor — S3 + S6 Live Update.
+//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform panel.
 
 mod audio_bridge;
 mod live_client;
 mod project;
+mod waveform_panel;
 
 use audio_bridge::AudioBridge;
 use eframe::egui;
 use live_client::EditorLiveClient;
 use project::Project;
 use std::path::PathBuf;
+use waveform_panel::WaveformPanel;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 800.0])
+            .with_inner_size([1400.0, 900.0])
             .with_title("RaMOD — Event Editor"),
         ..Default::default()
     };
@@ -53,6 +55,7 @@ struct RamodEditorApp {
     intensity: f32,
     new_event_name: String,
     live_client: Option<EditorLiveClient>,
+    waveform: WaveformPanel,
 }
 
 impl RamodEditorApp {
@@ -63,6 +66,8 @@ impl RamodEditorApp {
         if let Some(a) = audio.as_mut() {
             a.sync_project(&project);
         }
+        let mut waveform = WaveformPanel::default();
+        waveform.load_demo_tone();
         Self {
             project,
             browser_tab: BrowserTab::Events,
@@ -78,6 +83,7 @@ impl RamodEditorApp {
             intensity: 1.0,
             new_event_name: "event:/sfx/new".into(),
             live_client: None,
+            waveform,
         }
     }
 
@@ -145,6 +151,14 @@ impl eframe::App for RamodEditorApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
+                ui.menu_button("Window", |ui| {
+                    if ui
+                        .checkbox(&mut self.waveform.show, "Waveform Editor")
+                        .changed()
+                    {
+                        // toggle only
+                    }
+                });
                 ui.label(format!("  {}", self.project.name));
             });
         });
@@ -174,6 +188,16 @@ impl eframe::App for RamodEditorApp {
                 }
             });
         });
+
+        // Waveform bottom panel (S9)
+        if self.waveform.show {
+            egui::TopBottomPanel::bottom("waveform")
+                .default_height(220.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.waveform.ui(ui);
+                });
+        }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -206,36 +230,42 @@ impl eframe::App for RamodEditorApp {
             });
         });
 
-        egui::SidePanel::left("browser").default_width(260.0).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                for (tab, label) in [
-                    (BrowserTab::Events, "Events"),
-                    (BrowserTab::Banks, "Banks"),
-                    (BrowserTab::Assets, "Assets"),
-                ] {
-                    if ui.selectable_label(self.browser_tab == tab, label).clicked() {
-                        self.browser_tab = tab;
+        egui::SidePanel::left("browser")
+            .default_width(260.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for (tab, label) in [
+                        (BrowserTab::Events, "Events"),
+                        (BrowserTab::Banks, "Banks"),
+                        (BrowserTab::Assets, "Assets"),
+                    ] {
+                        if ui
+                            .selectable_label(self.browser_tab == tab, label)
+                            .clicked()
+                        {
+                            self.browser_tab = tab;
+                        }
+                    }
+                });
+                ui.separator();
+                if self.browser_tab == BrowserTab::Events {
+                    for (i, ev) in self.project.events.iter().enumerate() {
+                        if ui
+                            .selectable_label(self.selected_event == Some(i), &ev.path)
+                            .clicked()
+                        {
+                            self.selected_event = Some(i);
+                        }
                     }
                 }
             });
-            ui.separator();
-            if self.browser_tab == BrowserTab::Events {
-                for (i, ev) in self.project.events.iter().enumerate() {
-                    if ui
-                        .selectable_label(self.selected_event == Some(i), &ev.path)
-                        .clicked()
-                    {
-                        self.selected_event = Some(i);
-                    }
-                }
-            }
-        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Overview");
             if let Some(p) = self.selected_path() {
                 ui.label(p);
             }
+            ui.weak("Waveform panel: Window → Waveform Editor (bottom)");
         });
 
         if matches!(self.transport, TransportState::Playing) {
