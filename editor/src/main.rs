@@ -1,4 +1,4 @@
-//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform + asset import.
+//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform + asset import + DnD.
 
 mod audio_bridge;
 mod live_client;
@@ -16,7 +16,8 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 900.0])
-            .with_title("RaMOD — Event Editor"),
+            .with_title("RaMOD — Event Editor")
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     eframe::run_native(
@@ -77,7 +78,7 @@ impl RamodEditorApp {
             selected_event: Some(0),
             selected_asset: Some(0),
             live_update: false,
-            status_msg: "Ready".into(),
+            status_msg: "Ready — drag & drop .wav files".into(),
             audio,
             intensity: 1.0,
             new_event_name: "event:/sfx/new".into(),
@@ -156,7 +157,6 @@ impl RamodEditorApp {
                     self.status_msg = self.waveform.status.clone();
                 }
             } else if let Some(freq) = asset.demo_freq_hz {
-                // regenerate simple tone at asset freq
                 let rate = 48_000u32;
                 let frames = rate as usize / 2;
                 let samples: Vec<f32> = (0..frames)
@@ -174,10 +174,73 @@ impl RamodEditorApp {
             }
         }
     }
+
+    fn handle_file_drops(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        for path in dropped {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if ext != "wav" {
+                self.status_msg = format!(
+                    "Unsupported drop: {} (only .wav for now)",
+                    path.display()
+                );
+                continue;
+            }
+            if self.waveform.import_wav(&path) {
+                self.register_asset(path.clone());
+                self.waveform.show = true;
+                self.status_msg = format!("Dropped + imported {}", path.display());
+            } else {
+                self.status_msg = self.waveform.status.clone();
+            }
+        }
+    }
+
+    fn drop_hover_hint(&self, ctx: &egui::Context) -> bool {
+        ctx.input(|i| !i.raw.hovered_files.is_empty())
+    }
 }
 
 impl eframe::App for RamodEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_file_drops(ctx);
+
+        if self.drop_hover_hint(ctx) {
+            egui::Area::new(egui::Id::new("drop_overlay"))
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    let screen = ctx.screen_rect();
+                    ui.allocate_ui_at_rect(screen, |ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(screen.size(), egui::Sense::hover());
+                        let painter = ui.painter();
+                        painter.rect_filled(
+                            rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(20, 40, 80, 160),
+                        );
+                        painter.text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Drop WAV files to import",
+                            egui::FontId::proportional(28.0),
+                            egui::Color32::WHITE,
+                        );
+                    });
+                });
+        }
+
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -323,6 +386,7 @@ impl eframe::App for RamodEditorApp {
                                 }
                             }
                         });
+                        ui.label("or drag & drop .wav onto the window");
                         if ui.button("+ Demo 880 Hz").clicked() {
                             self.project.add_asset_demo(
                                 format!("tone_{}", self.project.assets.len()),
@@ -359,7 +423,7 @@ impl eframe::App for RamodEditorApp {
             if let Some(p) = self.selected_path() {
                 ui.label(p);
             }
-            ui.weak("Assets → Import WAV · Waveform → Load + add to Assets");
+            ui.weak("Drag & drop .wav onto the window · Assets → Import · Waveform panel");
         });
 
         if matches!(self.transport, TransportState::Playing) {
