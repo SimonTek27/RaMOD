@@ -1,1 +1,1 @@
-//! See artifacts recovery - loading full content
+PLACEHOLDER_WILL_REPLACE
