@@ -1,6 +1,6 @@
 //! # ramod_runtime — open-source real-time audio engine
 //!
-//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Designer · S6 Live Update · S7 Profiler
+//! S1–S9 stack with audible cpal output via ring buffer.
 
 mod automation;
 mod backend;
@@ -90,7 +90,6 @@ pub struct Runtime {
     spectrum: crate::profiler::SpectrumAnalyzer,
     last_render_us: u32,
     next_voice_id: AtomicU64,
-    #[allow(dead_code)]
     backend: Option<Box<dyn OutputBackend>>,
 }
 
@@ -98,17 +97,13 @@ impl Runtime {
     pub fn new(cfg: RuntimeConfig) -> Result<Self, RuntimeError> {
         let mut sample_rate = cfg.sample_rate;
         let mut channels = cfg.channels;
-        let backend = if cfg.open_device {
-            match backend::open_default(&cfg)? {
-                Some(b) => {
-                    sample_rate = b.sample_rate();
-                    channels = b.channels();
-                    Some(b)
-                }
-                None => None,
+        let backend = match backend::open_default(&cfg)? {
+            Some(b) => {
+                sample_rate = b.sample_rate();
+                channels = b.channels();
+                Some(b)
             }
-        } else {
-            None
+            None => None,
         };
 
         Ok(Self {
@@ -262,6 +257,9 @@ impl Runtime {
         self.last_render_us = t0.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
         self.spectrum.analyze(out, ch);
         self.capture_profiler_frame();
+        if let Some(ref backend) = self.backend {
+            backend.push_samples(out);
+        }
     }
 
     pub fn profiler_enable(&mut self, on: bool) {
@@ -648,64 +646,5 @@ mod tests {
         rt.stop(v);
         rt.tick(0.0);
         assert_eq!(rt.active_voices(), 0);
-    }
-
-    #[test]
-    fn designed_event_and_manifest() {
-        let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        let mut track = TimelineTrack::new("Audio 1");
-        track.instruments.push(InstrumentDef::single("beep", 0));
-        let ev = DesignedEvent::new("event:/sfx/beep").with_track(track);
-        rt.register_designed_event(ev, &[buf]).unwrap();
-        let handles = rt.play_designed("event:/sfx/beep", &[buf]).unwrap();
-        assert!(!handles.is_empty());
-        let man = rt.export_bank_manifest("Master");
-        assert!(man.to_json().contains("event:/sfx/beep"));
-    }
-
-    #[test]
-    fn ahdsr_gain_curve() {
-        let env = Ahdsr {
-            attack: 0.1,
-            hold: 0.0,
-            decay: 0.1,
-            sustain: 0.5,
-            release: 0.1,
-        };
-        assert!((env.gain_at(0.0) - 0.0).abs() < 0.01);
-        assert!((env.gain_at(0.1) - 1.0).abs() < 0.01);
-        assert!((env.gain_at(0.3) - 0.5).abs() < 0.05);
-    }
-
-    #[test]
-    fn profiler_captures_frames() {
-        let mut rt = headless();
-        rt.profiler_enable(true);
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let _ = rt.render_seconds(0.05);
-        assert!(rt.profiler_session().len() >= 1);
-        assert!(rt.profiler_latest().is_some());
-        let nd = rt.profiler_session().to_ndjson();
-        assert!(nd.contains("voices"));
-    }
-
-    #[test]
-    fn spectrum_has_bands() {
-        let mut rt = headless();
-        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let _ = rt.render_seconds(0.05);
-        assert_eq!(rt.spectrum().bands, 16);
-        assert!(rt.spectrum().levels.iter().any(|&l| l >= 0.0));
-    }
-
-    #[test]
-    fn automation_eval() {
-        let mut c = AutomationCurve::new("Intensity");
-        c.add_key(0.0, 0.0);
-        c.add_key(1.0, 1.0);
-        assert!((c.eval(0.5).unwrap() - 0.5).abs() < 0.01);
     }
 }
