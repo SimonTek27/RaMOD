@@ -1,6 +1,6 @@
 //! # ramod_runtime — open-source real-time audio engine
 //!
-//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Event Designer · S6 Live Update
+//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Designer · S6 Live Update · S7 Profiler
 
 mod automation;
 mod backend;
@@ -17,6 +17,7 @@ mod live_api;
 #[cfg(feature = "live-update")]
 pub mod live_update;
 mod mixer;
+mod profiler;
 mod spatial;
 mod voice;
 
@@ -34,6 +35,7 @@ pub use error::RuntimeError;
 pub use event::{EventDescription, EventInstance, EventPath};
 pub use export::{BankManifest, EventManifestEntry};
 pub use mixer::{Bus, BusId, Meter, Mixer, Snapshot, SnapshotPlayer};
+pub use profiler::{EmitterDebug, ProfilerFrame, ProfilerSession, SpectrumAnalyzer};
 pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
@@ -84,6 +86,9 @@ pub struct Runtime {
     pub(crate) events: EventSystem,
     banks: BankRegistry,
     designed: Vec<DesignedEvent>,
+    profiler: crate::profiler::ProfilerSession,
+    spectrum: crate::profiler::SpectrumAnalyzer,
+    last_render_us: u32,
     next_voice_id: AtomicU64,
     #[allow(dead_code)]
     backend: Option<Box<dyn OutputBackend>>,
@@ -116,6 +121,9 @@ impl Runtime {
             events: EventSystem::new(),
             banks: BankRegistry::new(),
             designed: Vec::new(),
+            profiler: crate::profiler::ProfilerSession::new(600),
+            spectrum: crate::profiler::SpectrumAnalyzer::new(16),
+            last_render_us: 0,
             next_voice_id: AtomicU64::new(1),
             sample_rate,
             channels,
@@ -229,6 +237,7 @@ impl Runtime {
     }
 
     pub fn render(&mut self, out: &mut [f32]) {
+        let t0 = std::time::Instant::now();
         self.sync_event_spatial_gains();
         self.snapshots.apply(&mut self.mixer);
         let ch = self.channels as usize;
@@ -250,6 +259,85 @@ impl Runtime {
                 *s *= g;
             }
         }
+        self.last_render_us = t0.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+        self.spectrum.analyze(out, ch);
+        self.capture_profiler_frame();
+    }
+
+    pub fn profiler_enable(&mut self, on: bool) {
+        self.profiler.enable(on);
+    }
+
+    pub fn profiler_clear(&mut self) {
+        self.profiler.clear();
+    }
+
+    pub fn profiler_session(&self) -> &crate::profiler::ProfilerSession {
+        &self.profiler
+    }
+
+    pub fn profiler_latest(&self) -> Option<&crate::profiler::ProfilerFrame> {
+        self.profiler.latest()
+    }
+
+    pub fn spectrum(&self) -> &crate::profiler::SpectrumAnalyzer {
+        &self.spectrum
+    }
+
+    pub fn last_render_cpu_us(&self) -> u32 {
+        self.last_render_us
+    }
+
+    fn capture_profiler_frame(&mut self) {
+        if !self.profiler.is_enabled() {
+            return;
+        }
+        let master = self.mixer.master_id();
+        let (peak, rms) = self
+            .mixer
+            .bus(master)
+            .map(|b| (b.meter.peak, b.meter.rms))
+            .unwrap_or((0.0, 0.0));
+
+        let mut playing_events = Vec::new();
+        let mut params = Vec::new();
+        let mut emitters = Vec::new();
+        for id in 1..1024u64 {
+            let Some(inst) = self.events.instance(id) else {
+                continue;
+            };
+            if !inst.is_playing() {
+                continue;
+            }
+            let path = inst.path().as_str().to_string();
+            playing_events.push(path.clone());
+            if let Some(v) = inst.get_parameter("Intensity") {
+                params.push((path.clone(), "Intensity".into(), v));
+            }
+            if inst.is_3d {
+                let a = inst.attributes();
+                emitters.push(crate::profiler::EmitterDebug {
+                    position: a.position,
+                    velocity: a.velocity,
+                    audibility: 1.0,
+                });
+            }
+        }
+        if playing_events.len() > 16 {
+            playing_events.truncate(16);
+        }
+        self.profiler.push(crate::profiler::ProfilerFrame {
+            index: 0,
+            time: 0.0,
+            cpu_render_us: self.last_render_us,
+            active_voices: self.voices.active_count(),
+            active_instances: self.events.instance_count(),
+            master_peak: peak,
+            master_rms: rms,
+            playing_events,
+            params,
+            emitters,
+        });
     }
 
     pub fn render_seconds(&mut self, seconds: f32) -> Vec<f32> {
@@ -588,6 +676,29 @@ mod tests {
         assert!((env.gain_at(0.0) - 0.0).abs() < 0.01);
         assert!((env.gain_at(0.1) - 1.0).abs() < 0.01);
         assert!((env.gain_at(0.3) - 0.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn profiler_captures_frames() {
+        let mut rt = headless();
+        rt.profiler_enable(true);
+        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
+        rt.play(buf, PlayParams::default()).unwrap();
+        let _ = rt.render_seconds(0.05);
+        assert!(rt.profiler_session().len() >= 1);
+        assert!(rt.profiler_latest().is_some());
+        let nd = rt.profiler_session().to_ndjson();
+        assert!(nd.contains("voices"));
+    }
+
+    #[test]
+    fn spectrum_has_bands() {
+        let mut rt = headless();
+        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
+        rt.play(buf, PlayParams::default()).unwrap();
+        let _ = rt.render_seconds(0.05);
+        assert_eq!(rt.spectrum().bands, 16);
+        assert!(rt.spectrum().levels.iter().any(|&l| l >= 0.0));
     }
 
     #[test]
