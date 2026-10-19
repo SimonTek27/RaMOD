@@ -1,4 +1,4 @@
-//! egui Waveform panel — multi-format import (wav/mp3/ogg/flac).
+//! egui Waveform panel — multi-format import + preview.
 
 use egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use ramod_waveform::{PeakMinMax, WaveBuffer};
@@ -88,6 +88,28 @@ impl WaveformPanel {
                     w.select_all();
                 }
             }
+            if ui
+                .button("▶ Preview")
+                .on_hover_text("Play selection (or full)")
+                .clicked()
+            {
+                if let Some(w) = self.wave.as_ref() {
+                    let (samples, ch, rate) = if !w.selection.is_empty() {
+                        let (a, b) = w.selection.sample_range(w.channels);
+                        (w.samples[a..b].to_vec(), w.channels, w.sample_rate)
+                    } else {
+                        (w.samples.clone(), w.channels, w.sample_rate)
+                    };
+                    action = WaveformAction::PlayPreview {
+                        samples,
+                        channels: ch,
+                        sample_rate: rate,
+                    };
+                }
+            }
+            if ui.button("■").on_hover_text("Stop preview").clicked() {
+                action = WaveformAction::StopPreview;
+            }
             ui.separator();
             self.toolbar(ui);
         });
@@ -105,11 +127,7 @@ impl WaveformPanel {
                     action = WaveformAction::Imported(p);
                 }
             }
-            if ui
-                .button("Load + add to Assets")
-                .on_hover_text("Import and register in project Assets")
-                .clicked()
-            {
+            if ui.button("Load + add to Assets").clicked() {
                 let p = PathBuf::from(self.import_path.trim());
                 if self.import_wav(&p) {
                     action = WaveformAction::ImportedAndRegister(p);
@@ -209,50 +227,42 @@ impl WaveformPanel {
         if ui.button("Cut").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 self.clipboard = w.cut();
-                self.status = format!("Cut {} samples", self.clipboard.len());
             }
         }
         if ui.button("Copy").clicked() {
             if let Some(w) = self.wave.as_ref() {
                 self.clipboard = w.copy();
-                self.status = format!("Copied {} samples", self.clipboard.len());
             }
         }
         if ui.button("Paste").clicked() {
             let clip = self.clipboard.clone();
             if let Some(w) = self.wave.as_mut() {
                 w.paste(&clip);
-                self.status = "Pasted".into();
             }
         }
         if ui.button("Silence").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_silence();
-                self.status = "Silence".into();
             }
         }
         if ui.button("Reverse").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_reverse();
-                self.status = "Reverse".into();
             }
         }
         if ui.button("Fade in").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_fade_in();
-                self.status = "Fade in".into();
             }
         }
         if ui.button("Fade out").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_fade_out();
-                self.status = "Fade out".into();
             }
         }
         if ui.button("Normalize").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_normalize(0.95);
-                self.status = "Normalize".into();
             }
         }
         ui.label("Gain");
@@ -261,16 +271,11 @@ impl WaveformPanel {
             let g = 10f32.powf(self.gain_db / 20.0);
             if let Some(w) = self.wave.as_mut() {
                 w.apply_gain(g);
-                self.status = format!("Gain {:+.1} dB", self.gain_db);
             }
         }
         if ui.button("Undo").clicked() {
             if let Some(w) = self.wave.as_mut() {
-                if w.undo() {
-                    self.status = "Undo".into();
-                } else {
-                    self.status = "Nothing to undo".into();
-                }
+                let _ = w.undo();
             }
         }
     }
@@ -319,18 +324,11 @@ impl WaveformPanel {
 
     fn export(&mut self, selection_only: bool) {
         let Some(w) = self.wave.as_ref() else {
-            self.status = "No waveform".into();
             return;
         };
         let path = PathBuf::from(&self.export_path);
         match w.export_wav(&path, selection_only) {
-            Ok(()) => {
-                self.status = format!(
-                    "Exported {} ({})",
-                    path.display(),
-                    if selection_only { "selection" } else { "full" }
-                );
-            }
+            Ok(()) => self.status = format!("Exported {}", path.display()),
             Err(e) => self.status = format!("Export failed: {e}"),
         }
     }
@@ -341,4 +339,10 @@ pub enum WaveformAction {
     None,
     Imported(PathBuf),
     ImportedAndRegister(PathBuf),
+    PlayPreview {
+        samples: Vec<f32>,
+        channels: u16,
+        sample_rate: u32,
+    },
+    StopPreview,
 }
