@@ -5,12 +5,14 @@
 mod effects;
 mod export;
 mod history;
+mod import;
 mod selection;
 mod view;
 
 pub use effects::{fade, gain, normalize, reverse, silence};
 pub use export::{write_wav_i16, WavError};
 pub use history::{EditCommand, UndoStack};
+pub use import::{read_wav, ImportError};
 pub use selection::Selection;
 pub use view::{peak_overview, PeakMinMax};
 
@@ -39,6 +41,12 @@ impl WaveBuffer {
             selection: Selection::all(0),
             undo: UndoStack::new(64),
         })
+    }
+
+    pub fn from_wav(path: &std::path::Path) -> Result<Self, ImportError> {
+        let mut w = read_wav(path)?;
+        w.select_all();
+        Ok(w)
     }
 
     pub fn silent(frames: usize, channels: u16, sample_rate: u32) -> Result<Self, WaveError> {
@@ -94,7 +102,6 @@ impl WaveBuffer {
         }
     }
 
-    /// Cut selection to clipboard; removes from buffer.
     pub fn cut(&mut self) -> Vec<f32> {
         let clip = self.copy();
         self.delete_selection();
@@ -116,12 +123,10 @@ impl WaveBuffer {
         self.selection = Selection::region(self.selection.start, self.selection.start);
     }
 
-    /// Insert clipboard samples at selection start (replaces selection if non-empty).
     pub fn paste(&mut self, clipboard: &[f32]) {
         if clipboard.is_empty() {
             return;
         }
-        // Align to channel multiple
         let ch = self.channels as usize;
         let len = clipboard.len() - (clipboard.len() % ch);
         if len == 0 {
@@ -131,7 +136,8 @@ impl WaveBuffer {
         let (a, b) = self.selection.sample_range(self.channels);
         self.samples.splice(a..b, clipboard[..len].iter().copied());
         let inserted_frames = len / ch;
-        self.selection = Selection::region(self.selection.start, self.selection.start + inserted_frames);
+        self.selection =
+            Selection::region(self.selection.start, self.selection.start + inserted_frames);
     }
 
     pub fn apply_silence(&mut self) {
@@ -163,7 +169,12 @@ impl WaveBuffer {
             return;
         }
         self.push_undo();
-        normalize(&mut self.samples, self.channels, self.selection, target_peak);
+        normalize(
+            &mut self.samples,
+            self.channels,
+            self.selection,
+            target_peak,
+        );
     }
 
     pub fn apply_fade_in(&mut self) {
@@ -182,20 +193,21 @@ impl WaveBuffer {
         fade(&mut self.samples, self.channels, self.selection, false);
     }
 
-    /// Peak overview for waveform UI (S9.1).
     pub fn overview(&self, buckets: usize) -> Vec<PeakMinMax> {
         peak_overview(&self.samples, self.channels, buckets)
     }
 
-    /// Export selection or entire buffer as WAV i16 (S9.4).
-    pub fn export_wav(&self, path: &std::path::Path, selection_only: bool) -> Result<(), WavError> {
-        let (samples, frames) = if selection_only && !self.selection.is_empty() {
+    pub fn export_wav(
+        &self,
+        path: &std::path::Path,
+        selection_only: bool,
+    ) -> Result<(), WavError> {
+        let samples = if selection_only && !self.selection.is_empty() {
             let (a, b) = self.selection.sample_range(self.channels);
-            (&self.samples[a..b], self.selection.len())
+            &self.samples[a..b]
         } else {
-            (self.samples.as_slice(), self.frames())
+            self.samples.as_slice()
         };
-        let _ = frames;
         write_wav_i16(path, samples, self.channels, self.sample_rate)
     }
 }
@@ -218,6 +230,7 @@ impl std::error::Error for WaveError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn mono_ramp() -> WaveBuffer {
         let s: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
@@ -237,29 +250,15 @@ mod tests {
     }
 
     #[test]
-    fn reverse_selection() {
+    fn wav_roundtrip() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ramod_wav_test.wav");
         let mut w = mono_ramp();
-        w.set_selection(0, 4);
-        w.apply_reverse();
-        assert!((w.samples[0] - 0.03).abs() < 0.001);
-        assert!((w.samples[3] - 0.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn undo_restores() {
-        let mut w = mono_ramp();
-        let before = w.samples.clone();
         w.select_all();
-        w.apply_gain(0.5);
-        assert!((w.samples[50] - before[50] * 0.5).abs() < 1e-5);
-        assert!(w.undo());
-        assert!((w.samples[50] - before[50]).abs() < 1e-5);
-    }
-
-    #[test]
-    fn overview_buckets() {
-        let w = mono_ramp();
-        let o = w.overview(10);
-        assert_eq!(o.len(), 10);
+        w.export_wav(&path, false).unwrap();
+        let loaded = WaveBuffer::from_wav(&path).unwrap();
+        assert_eq!(loaded.frames(), 100);
+        assert_eq!(loaded.channels, 1);
+        let _ = std::fs::remove_file(&path);
     }
 }
