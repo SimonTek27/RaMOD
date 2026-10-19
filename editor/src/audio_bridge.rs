@@ -1,44 +1,68 @@
-//! S3.3 — Transport Play → ramod_runtime.
+//! Transport Play → ramod_runtime (audible via cpal when available).
+
+use std::path::Path;
 
 use ramod_runtime::{
-    Attributes3d, Attenuation, EventDescription, PlayParams, Runtime, RuntimeConfig, Vec3,
+    Attenuation, EventDescription, PlayParams, Runtime, RuntimeConfig,
 };
+use ramod_waveform::WaveBuffer;
 
 use crate::project::{AssetEntry, EventEntry, Project};
 
 pub struct AudioBridge {
     rt: Runtime,
-    /// path → registered
     registered: Vec<String>,
     playing_id: Option<u64>,
+    /// Voice-style play from waveform (buffer handle path).
+    preview_voice: Option<ramod_runtime::VoiceHandle>,
 }
 
 impl AudioBridge {
     pub fn new() -> Result<Self, String> {
-        let rt = Runtime::new(RuntimeConfig {
-            open_device: false, // headless mix; wire cpal later
+        // Prefer real device; fall back to headless.
+        let rt = match Runtime::new(RuntimeConfig {
+            open_device: true,
             sample_rate: 48_000,
             channels: 2,
             max_voices: 32,
-        })
-        .map_err(|e| e.to_string())?;
+        }) {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("cpal open failed ({e}), using headless mix");
+                Runtime::new(RuntimeConfig {
+                    open_device: false,
+                    sample_rate: 48_000,
+                    channels: 2,
+                    max_voices: 32,
+                })
+                .map_err(|e| e.to_string())?
+            }
+        };
         Ok(Self {
             rt,
             registered: Vec::new(),
             playing_id: None,
+            preview_voice: None,
         })
     }
 
-    /// Rebuild event registry from the project (call after project edits).
     pub fn sync_project(&mut self, project: &Project) {
         self.stop();
         self.registered.clear();
-        // Re-create runtime to clear buffers/events cleanly (S3 simplicity).
+        let open = true;
         if let Ok(rt) = Runtime::new(RuntimeConfig {
-            open_device: false,
+            open_device: open,
             sample_rate: 48_000,
             channels: 2,
             max_voices: 32,
+        })
+        .or_else(|_| {
+            Runtime::new(RuntimeConfig {
+                open_device: false,
+                sample_rate: 48_000,
+                channels: 2,
+                max_voices: 32,
+            })
         }) {
             self.rt = rt;
         }
@@ -72,9 +96,32 @@ impl AudioBridge {
         Ok(())
     }
 
+    /// Preview arbitrary PCM (waveform panel).
+    pub fn play_pcm(
+        &mut self,
+        samples: Vec<f32>,
+        channels: u16,
+        sample_rate: u32,
+    ) -> Result<(), String> {
+        self.stop();
+        let buf = self
+            .rt
+            .load_pcm(samples, channels, sample_rate)
+            .map_err(|e| e.to_string())?;
+        let voice = self
+            .rt
+            .play(buf, PlayParams::default())
+            .map_err(|e| e.to_string())?;
+        self.preview_voice = Some(voice);
+        Ok(())
+    }
+
     pub fn stop(&mut self) {
         if let Some(id) = self.playing_id.take() {
             self.rt.release_instance(id);
+        }
+        if let Some(v) = self.preview_voice.take() {
+            self.rt.stop(v);
         }
     }
 
@@ -84,21 +131,23 @@ impl AudioBridge {
         }
     }
 
-    /// Drain a short buffer (keeps voices advancing while UI plays).
     pub fn pump(&mut self, dt: f32) {
-        if self.playing_id.is_none() {
+        if self.playing_id.is_none() && self.preview_voice.is_none() {
             return;
         }
         self.rt.tick(dt);
         let frames = ((dt * self.rt.sample_rate() as f32).max(1.0) as usize).min(4096);
         let mut out = vec![0.0f32; frames * self.rt.channels() as usize];
         self.rt.render(&mut out);
-        // S3: mixed to null (open_device: false). Peak used for UI meter later.
-        let _peak = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        // With open_device, cpal callback may also pull; render keeps state advancing.
+        let _ = out;
+        if self.preview_voice.is_some() && self.rt.active_voices() == 0 {
+            self.preview_voice = None;
+        }
     }
 
     pub fn is_playing(&self) -> bool {
-        self.playing_id.is_some()
+        self.playing_id.is_some() || self.preview_voice.is_some()
     }
 }
 
@@ -109,12 +158,27 @@ struct ResolvedPcm {
 }
 
 fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
-    let asset: Option<&AssetEntry> = ev
-        .asset_index
-        .and_then(|i| project.assets.get(i));
+    let asset: Option<&AssetEntry> = ev.asset_index.and_then(|i| project.assets.get(i));
+
+    // Prefer file on disk (wav/mp3/ogg/flac).
+    if let Some(AssetEntry {
+        source_path: Some(path),
+        ..
+    }) = asset
+    {
+        if let Ok(w) = WaveBuffer::from_file(Path::new(path)) {
+            return ResolvedPcm {
+                samples: w.samples,
+                channels: w.channels,
+                sample_rate: w.sample_rate,
+            };
+        }
+    }
+
+    // Demo tone fallback
     let freq = asset.and_then(|a| a.demo_freq_hz).unwrap_or(440.0);
     let rate = 48_000u32;
-    let frames = rate as usize / 2; // 0.5 s
+    let frames = rate as usize / 2;
     let samples: Vec<f32> = (0..frames)
         .map(|i| {
             let t = i as f32 / rate as f32;
@@ -125,18 +189,5 @@ fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
         samples,
         channels: 1,
         sample_rate: rate,
-    }
-}
-
-#[allow(dead_code)]
-fn _play_params() -> PlayParams {
-    PlayParams::default()
-}
-
-#[allow(dead_code)]
-fn _listener() -> Attributes3d {
-    Attributes3d {
-        position: Vec3::ZERO,
-        ..Default::default()
     }
 }
