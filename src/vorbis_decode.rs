@@ -67,9 +67,8 @@ impl DecodedPcm {
 /// Decode a complete Ogg Vorbis byte stream to interleaved `f32` PCM.
 pub fn decode_ogg_to_pcm(ogg: &[u8]) -> Result<DecodedPcm, VorbisDecodeError> {
     let cursor = Cursor::new(ogg);
-    let mut reader = OggStreamReader::new(cursor).map_err(|e| {
-        VorbisDecodeError::Decode(format!("ogg open: {e}"))
-    })?;
+    let mut reader = OggStreamReader::new(cursor)
+        .map_err(|e| VorbisDecodeError::Decode(format!("ogg open: {e}")))?;
 
     let channels = reader.ident_hdr.audio_channels as u32;
     let sample_rate = reader.ident_hdr.audio_sample_rate;
@@ -84,7 +83,6 @@ pub fn decode_ogg_to_pcm(ogg: &[u8]) -> Result<DecodedPcm, VorbisDecodeError> {
         .read_dec_packet_itl()
         .map_err(|e| VorbisDecodeError::Decode(format!("packet: {e}")))?
     {
-        // lewton i16 path — convert to f32
         for s in packet {
             samples.push(s as f32 / 32768.0);
         }
@@ -103,7 +101,7 @@ pub fn decode_ogg_to_pcm(ogg: &[u8]) -> Result<DecodedPcm, VorbisDecodeError> {
 
 /// Decode one FSB5 `VORBIS` sample to interleaved `f32` PCM.
 ///
-//! Rebuilds Ogg via the bundled setup-header table, then runs `lewton`.
+/// Rebuilds Ogg via the bundled setup-header table, then runs `lewton`.
 pub fn decode_sample_to_pcm(
     bank: &Fsb5,
     index: usize,
@@ -117,12 +115,8 @@ mod tests {
     use super::*;
     use crate::fsb::{Fsb5, SoundFormat};
 
-    /// Minimal synthetic Vorbis bank is not fully decodable without real packets;
-    /// this test only checks the error path for PCM banks.
     #[test]
-    fn rejects_pcm_bank() {
-        // Build a tiny PCM bank via the writer if available in tests.
-        // Without fixtures, just ensure API is linked.
+    fn api_linked() {
         let _ = std::mem::size_of::<DecodedPcm>();
         let _ = SoundFormat::Vorbis;
         let _ = std::any::type_name::<Fsb5>();
