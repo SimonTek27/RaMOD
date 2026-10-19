@@ -34,7 +34,14 @@ impl std::fmt::Display for VorbisDecodeError {
     }
 }
 
-impl std::error::Error for VorbisDecodeError {}
+impl std::error::Error for VorbisDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            VorbisDecodeError::Export(error) => Some(error),
+            VorbisDecodeError::Decode(_) | VorbisDecodeError::Empty => None,
+        }
+    }
+}
 
 impl From<VorbisExportError> for VorbisDecodeError {
     fn from(value: VorbisExportError) -> Self {
@@ -120,5 +127,11 @@ mod tests {
         let _ = std::mem::size_of::<DecodedPcm>();
         let _ = SoundFormat::Vorbis;
         let _ = std::any::type_name::<Fsb5>();
+    }
+
+    #[test]
+    fn export_error_is_source() {
+        let e = VorbisDecodeError::Export(VorbisExportError::NotVorbis);
+        assert!(std::error::Error::source(&e).is_some());
     }
 }
