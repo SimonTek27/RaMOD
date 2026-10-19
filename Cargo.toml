@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "editor", "runtime", "bevy_ramod"]
+members = [".", "editor", "runtime", "bevy_ramod", "waveform"]
 resolver = "2"
 
 [workspace.package]
@@ -18,7 +18,7 @@ repository = "https://github.com/SimonTek27/RaMOD"
 keywords = ["fsb5", "vorbis", "audio", "middleware", "modding", "bevy"]
 categories = ["multimedia::audio", "parser-implementations", "command-line-utilities"]
 rust-version = "1.85"
-exclude = ["tools/**", "editor/**", "runtime/**", "bevy_ramod/**"]
+exclude = ["tools/**", "editor/**", "runtime/**", "bevy_ramod/**", "waveform/**"]
 
 [features]
 default = ["encoder-rust", "decoder-rust"]
