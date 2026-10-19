@@ -1,6 +1,7 @@
 //! # ramod_waveform — GoldWave-style PCM editing core (S9)
 //!
-//! Pure-Rust, non-destructive-friendly buffer with selection, effects, undo.
+//! Pure-Rust friendly buffer with selection, effects, undo.
+//! Import: WAV / MP3 / OGG Vorbis / FLAC (Symphonia).
 
 mod effects;
 mod export;
@@ -12,7 +13,7 @@ mod view;
 pub use effects::{fade, gain, normalize, reverse, silence};
 pub use export::{write_wav_i16, WavError};
 pub use history::{EditCommand, UndoStack};
-pub use import::{read_wav, ImportError};
+pub use import::{is_supported_extension, read_audio, read_wav, ImportError};
 pub use selection::Selection;
 pub use view::{peak_overview, PeakMinMax};
 
@@ -43,10 +44,16 @@ impl WaveBuffer {
         })
     }
 
-    pub fn from_wav(path: &std::path::Path) -> Result<Self, ImportError> {
-        let mut w = read_wav(path)?;
+    /// Load WAV / MP3 / OGG / FLAC.
+    pub fn from_file(path: &std::path::Path) -> Result<Self, ImportError> {
+        let mut w = read_audio(path)?;
         w.select_all();
         Ok(w)
+    }
+
+    /// Alias for [`from_file`].
+    pub fn from_wav(path: &std::path::Path) -> Result<Self, ImportError> {
+        Self::from_file(path)
     }
 
     pub fn silent(frames: usize, channels: u16, sample_rate: u32) -> Result<Self, WaveError> {
@@ -230,7 +237,6 @@ impl std::error::Error for WaveError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn mono_ramp() -> WaveBuffer {
         let s: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
@@ -256,7 +262,7 @@ mod tests {
         let mut w = mono_ramp();
         w.select_all();
         w.export_wav(&path, false).unwrap();
-        let loaded = WaveBuffer::from_wav(&path).unwrap();
+        let loaded = WaveBuffer::from_file(&path).unwrap();
         assert_eq!(loaded.frames(), 100);
         assert_eq!(loaded.channels, 1);
         let _ = std::fs::remove_file(&path);
