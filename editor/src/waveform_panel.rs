@@ -9,7 +9,6 @@ pub struct WaveformPanel {
     pub clipboard: Vec<f32>,
     pub show: bool,
     pub status: String,
-    /// Drag selection in normalized 0..1 overview space.
     drag_start: Option<f32>,
     export_path: String,
     gain_db: f32,
@@ -30,7 +29,6 @@ impl Default for WaveformPanel {
 }
 
 impl WaveformPanel {
-    /// Demo 0.5s 440 Hz tone.
     pub fn load_demo_tone(&mut self) {
         let rate = 48_000u32;
         let frames = rate as usize / 2;
@@ -72,34 +70,12 @@ impl WaveformPanel {
             ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::click_and_drag());
         let rect = response.rect;
 
-        // Background
-        painter.rect_filled(rect, 2.0, Color32::from_rgb(22, 22, 26));
-        painter.rect_stroke(rect, 2.0, Stroke::new(1.0, Color32::from_rgb(50, 50, 55)), egui::StrokeKind::Outside);
-
-        // Zero line
-        let mid_y = rect.center().y;
-        painter.line_segment(
-            [Pos2::new(rect.left(), mid_y), Pos2::new(rect.right(), mid_y)],
-            Stroke::new(1.0, Color32::from_rgb(40, 40, 48)),
-        );
-
-        if let Some(w) = self.wave.as_ref() {
-            let buckets = (rect.width() as usize).clamp(32, 2048);
-            let overview = w.overview(buckets);
-            self.paint_overview(&painter, rect, &overview, mid_y);
-            self.paint_selection(&painter, rect, w);
-            self.handle_drag(&response, rect, w.frames());
-        } else {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "No waveform — click Demo tone",
-                egui::FontId::proportional(14.0),
-                Color32::from_rgb(120, 120, 130),
-            );
+        // Update selection from drag before paint
+        if response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                self.drag_start = Some(((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+            }
         }
-
-        // Re-apply selection after drag (needs mut)
         if let Some(start_n) = self.drag_start {
             if let Some(pos) = response.interact_pointer_pos() {
                 if let Some(w) = self.wave.as_mut() {
@@ -112,6 +88,30 @@ impl WaveformPanel {
         }
         if response.drag_stopped() {
             self.drag_start = None;
+        }
+
+        painter.rect_filled(rect, 2.0, Color32::from_rgb(22, 22, 26));
+        painter.rect_stroke(rect, 2.0, Stroke::new(1.0, Color32::from_rgb(50, 50, 55)));
+
+        let mid_y = rect.center().y;
+        painter.line_segment(
+            [Pos2::new(rect.left(), mid_y), Pos2::new(rect.right(), mid_y)],
+            Stroke::new(1.0, Color32::from_rgb(40, 40, 48)),
+        );
+
+        if let Some(w) = self.wave.as_ref() {
+            let buckets = (rect.width() as usize).clamp(32, 2048);
+            let overview = w.overview(buckets);
+            Self::paint_overview(&painter, rect, &overview, mid_y);
+            Self::paint_selection(&painter, rect, w);
+        } else {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "No waveform — click Demo tone",
+                egui::FontId::proportional(14.0),
+                Color32::from_rgb(120, 120, 130),
+            );
         }
 
         ui.horizontal(|ui| {
@@ -148,9 +148,9 @@ impl WaveformPanel {
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
-        let Some(_) = self.wave.as_ref() else {
+        if self.wave.is_none() {
             return;
-        };
+        }
 
         if ui.button("Cut").clicked() {
             if let Some(w) = self.wave.as_mut() {
@@ -198,7 +198,7 @@ impl WaveformPanel {
         if ui.button("Normalize").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 w.apply_normalize(0.95);
-                self.status = "Normalize −0.45 dB peak".into();
+                self.status = "Normalize".into();
             }
         }
         ui.label("Gain");
@@ -222,7 +222,6 @@ impl WaveformPanel {
     }
 
     fn paint_overview(
-        &self,
         painter: &egui::Painter,
         rect: Rect,
         overview: &[PeakMinMax],
@@ -245,7 +244,7 @@ impl WaveformPanel {
         }
     }
 
-    fn paint_selection(&self, painter: &egui::Painter, rect: Rect, w: &WaveBuffer) {
+    fn paint_selection(painter: &egui::Painter, rect: Rect, w: &WaveBuffer) {
         let frames = w.frames().max(1) as f32;
         let x0 = rect.left() + (w.selection.start as f32 / frames) * rect.width();
         let x1 = rect.left() + (w.selection.end as f32 / frames) * rect.width();
@@ -262,14 +261,6 @@ impl WaveformPanel {
             [Pos2::new(x1, rect.top()), Pos2::new(x1, rect.bottom())],
             Stroke::new(1.0, Color32::from_rgb(200, 180, 80)),
         );
-    }
-
-    fn handle_drag(&mut self, response: &egui::Response, rect: Rect, _frames: usize) {
-        if response.drag_started() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                self.drag_start = Some(((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
-            }
-        }
     }
 
     fn export(&mut self, selection_only: bool) {
