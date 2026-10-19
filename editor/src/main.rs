@@ -1,4 +1,4 @@
-//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform + multi-format import + DnD.
+//! RaMOD Event Editor — multi-format import, DnD, audible preview.
 
 mod audio_bridge;
 mod live_client;
@@ -46,14 +46,12 @@ struct RamodEditorApp {
     browser_tab: BrowserTab,
     transport: TransportState,
     time_secs: f32,
-    search: String,
     selected_event: Option<usize>,
     selected_asset: Option<usize>,
     live_update: bool,
     status_msg: String,
     audio: Option<AudioBridge>,
     intensity: f32,
-    new_event_name: String,
     live_client: Option<EditorLiveClient>,
     waveform: WaveformPanel,
     asset_import_path: String,
@@ -74,14 +72,12 @@ impl RamodEditorApp {
             browser_tab: BrowserTab::Events,
             transport: TransportState::Stopped,
             time_secs: 0.0,
-            search: String::new(),
             selected_event: Some(0),
             selected_asset: Some(0),
             live_update: false,
             status_msg: "Ready — drag & drop wav/mp3/ogg/flac".into(),
             audio,
             intensity: 1.0,
-            new_event_name: "event:/sfx/new".into(),
             live_client: None,
             waveform,
             asset_import_path: String::new(),
@@ -169,7 +165,6 @@ impl RamodEditorApp {
                     w.select_all();
                     self.waveform.wave = Some(w);
                     self.waveform.show = true;
-                    self.waveform.status = format!("Demo {} Hz", freq);
                 }
             }
         }
@@ -275,11 +270,6 @@ impl eframe::App for RamodEditorApp {
                     if let Some(a) = self.audio.as_mut() {
                         a.set_parameter("Intensity", self.intensity);
                     }
-                    if let Some(path) = self.selected_path().map(|s| s.to_string()) {
-                        if let Some(c) = self.live_client.as_mut() {
-                            let _ = c.set_param(&path, "Intensity", self.intensity);
-                        }
-                    }
                 }
             });
         });
@@ -293,6 +283,30 @@ impl eframe::App for RamodEditorApp {
                         WaveformAction::ImportedAndRegister(p) => self.register_asset(p),
                         WaveformAction::Imported(p) => {
                             self.status_msg = format!("Loaded {}", p.display());
+                        }
+                        WaveformAction::PlayPreview {
+                            samples,
+                            channels,
+                            sample_rate,
+                        } => {
+                            if let Some(a) = self.audio.as_mut() {
+                                match a.play_pcm(samples, channels, sample_rate) {
+                                    Ok(()) => {
+                                        self.transport = TransportState::Playing;
+                                        self.status_msg = "Waveform preview".into();
+                                    }
+                                    Err(e) => {
+                                        self.status_msg = format!("Preview failed: {e}")
+                                    }
+                                }
+                            }
+                        }
+                        WaveformAction::StopPreview => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.stop();
+                            }
+                            self.transport = TransportState::Stopped;
+                            self.status_msg = "Preview stopped".into();
                         }
                         WaveformAction::None => {}
                     }
@@ -316,10 +330,9 @@ impl eframe::App for RamodEditorApp {
                             Ok(c) => {
                                 self.live_client = Some(c);
                                 self.live_update = true;
-                                self.status_msg = "Live Update On — 127.0.0.1:17420".into();
+                                self.status_msg = "Live Update On".into();
                             }
                             Err(err) => {
-                                self.live_update = false;
                                 self.status_msg = format!("Live Update failed: {err}");
                             }
                         }
@@ -348,7 +361,6 @@ impl eframe::App for RamodEditorApp {
                     }
                 });
                 ui.separator();
-
                 match self.browser_tab {
                     BrowserTab::Events => {
                         for (i, ev) in self.project.events.iter().enumerate() {
@@ -382,38 +394,32 @@ impl eframe::App for RamodEditorApp {
                                         self.status_msg = self.waveform.status.clone();
                                     }
                                 } else {
-                                    self.status_msg = format!("File not found: {}", p.display());
+                                    self.status_msg = format!("Not found: {}", p.display());
                                 }
                             }
                         });
                         ui.label("or drag & drop wav/mp3/ogg/flac");
-                        if ui.button("+ Demo 880 Hz").clicked() {
-                            self.project.add_asset_demo(
-                                format!("tone_{}", self.project.assets.len()),
-                                880.0,
-                            );
-                        }
                         ui.separator();
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (i, a) in self.project.assets.iter().enumerate() {
-                                let label = if let Some(ref sp) = a.source_path {
-                                    format!("{}  ({})", a.name, sp)
-                                } else if let Some(f) = a.demo_freq_hz {
-                                    format!("{}  (demo {} Hz)", a.name, f)
-                                } else {
-                                    a.name.clone()
-                                };
-                                let selected = self.selected_asset == Some(i);
-                                if ui.selectable_label(selected, label).clicked() {
-                                    self.selected_asset = Some(i);
-                                }
-                                if selected {
-                                    if ui.small_button("Open in Waveform").clicked() {
-                                        self.open_asset_in_waveform(i);
-                                    }
-                                }
+                        for (i, a) in self.project.assets.iter().enumerate() {
+                            let label = if let Some(ref sp) = a.source_path {
+                                format!("{} ({})", a.name, sp)
+                            } else if let Some(f) = a.demo_freq_hz {
+                                format!("{} (demo {} Hz)", a.name, f)
+                            } else {
+                                a.name.clone()
+                            };
+                            if ui
+                                .selectable_label(self.selected_asset == Some(i), label)
+                                .clicked()
+                            {
+                                self.selected_asset = Some(i);
                             }
-                        });
+                            if self.selected_asset == Some(i)
+                                && ui.small_button("Open in Waveform").clicked()
+                            {
+                                self.open_asset_in_waveform(i);
+                            }
+                        }
                     }
                 }
             });
@@ -423,7 +429,7 @@ impl eframe::App for RamodEditorApp {
             if let Some(p) = self.selected_path() {
                 ui.label(p);
             }
-            ui.weak("Drag & drop wav/mp3/ogg/flac · Assets → Import · Waveform panel");
+            ui.weak("Drag & drop audio · Waveform ▶ Preview · Transport ▶ event");
         });
 
         if matches!(self.transport, TransportState::Playing) {
