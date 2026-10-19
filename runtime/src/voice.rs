@@ -1,6 +1,7 @@
 //! Voice pool and mixing.
 
 use crate::buffer::{BufferHandle, BufferStore, PcmBuffer};
+use crate::envelope::Ahdsr;
 
 /// Handle to a playing voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +42,11 @@ struct Voice {
     priority: i32,
     audibility: f32,
     alive: bool,
+    envelope: Option<Ahdsr>,
+    /// Seconds since note-on.
+    env_t: f32,
+    /// Envelope gain multiplier.
+    env_gain: f32,
 }
 
 pub(crate) struct VoicePool {
@@ -69,11 +75,13 @@ impl VoicePool {
         _out_rate: u32,
         priority: i32,
         audibility: f32,
+        envelope: Option<Ahdsr>,
     ) -> Result<VoiceHandle, ()> {
         self.reap_finished();
         if self.active_count() >= self.max {
             return Err(());
         }
+        let env_gain = envelope.map(|e| e.gain_at(0.0)).unwrap_or(1.0);
         self.voices.push(Voice {
             id,
             buffer,
@@ -87,11 +95,25 @@ impl VoicePool {
             priority,
             audibility,
             alive: true,
+            envelope,
+            env_t: 0.0,
+            env_gain,
         });
         Ok(VoiceHandle(id))
     }
 
-    /// Steal the least important voice if `priority`/`audibility` wins.
+    pub fn advance_envelopes(&mut self, dt: f32) {
+        for v in self.voices.iter_mut() {
+            if !v.alive {
+                continue;
+            }
+            v.env_t += dt;
+            if let Some(env) = v.envelope {
+                v.env_gain = env.gain_at(v.env_t);
+            }
+        }
+    }
+
     pub fn steal_lowest(&mut self, priority: i32, audibility: f32) -> bool {
         let score = |v: &Voice| v.priority as f32 * 1000.0 + v.audibility;
         let new_score = priority as f32 * 1000.0 + audibility;
@@ -159,6 +181,7 @@ impl VoicePool {
                 continue;
             }
             let ratio = (out_rate as f64 / voice.src_rate.max(1) as f64) / voice.pitch as f64;
+            let env_g = voice.env_gain;
 
             for f in 0..frames {
                 let src_pos = voice.cursor / ratio;
@@ -181,7 +204,7 @@ impl VoicePool {
                     let s0 = buf.samples.get(i0).copied().unwrap_or(0.0);
                     let s1 = buf.samples.get(i1).copied().unwrap_or(s0);
                     let s = s0 + (s1 - s0) * frac;
-                    out[f * out_ch + c] += s * voice.gain;
+                    out[f * out_ch + c] += s * voice.gain * env_g;
                 }
                 voice.cursor += 1.0;
             }

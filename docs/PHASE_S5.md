@@ -6,31 +6,46 @@
 
 Competitive Event Editor for indie/mid workflows: multi-track, instruments, automation, AHDSR, markers, export.
 
-## Done (foundation)
+## Done
 
-| ID | Item | Location |
-|----|------|----------|
-| S5.1 | Multi-track timeline model | `designer::TimelineTrack` |
-| S5.2 | Instrument kinds: Single / Multi / Scatter | `InstrumentKind` |
-| S5.3 | Automation curves (keyframes, linear eval) | `automation::AutomationCurve` |
-| S5.4 | Probability + loop regions | `InstrumentDef.probability`, `LoopRegion` |
-| S5.5 | AHDSR envelope | `envelope::Ahdsr` |
-| S5.6 | Transition markers | `TransitionMarker` |
-| S5.7 | 3D props on `DesignedEvent` | `is_3d` + `Attenuation` |
-| S5.8 | Build → JSON bank manifest export | editor / `export` |
+| ID | Item |
+|----|------|
+| S5.1 | Multi-track timeline model (`TimelineTrack`) |
+| S5.2 | Instrument kinds: Single / Multi / Scatter |
+| S5.3 | Automation curves (keyframes, linear eval) |
+| S5.4 | Probability on instruments + `LoopRegion` |
+| S5.5 | AHDSR on voices (`envelope` + mix) |
+| S5.6 | Transition markers (data model) |
+| S5.7 | 3D props on `DesignedEvent` |
+| S5.8 | `BankManifest::to_json` build export |
 
-## Runtime modules
+## API
 
-- `runtime/src/envelope.rs`
-- `runtime/src/automation.rs`
+```rust
+let mut track = TimelineTrack::new("Audio 1");
+track.instruments.push(InstrumentDef::single("beep", 0));
+let ev = DesignedEvent::new("event:/sfx/beep").with_track(track);
+rt.register_designed_event(ev, &[buf])?;
+let voices = rt.play_designed("event:/sfx/beep", &[buf])?;
+let json = rt.export_bank_manifest("Master").to_json();
+```
+
+## Modules
+
 - `runtime/src/designer.rs`
+- `runtime/src/automation.rs`
+- `runtime/src/envelope.rs`
+- `runtime/src/export.rs`
 
-## Next wiring
-
-1. `Runtime::register_designed_event` expands tracks → voices with AHDSR + probability
-2. Editor Overview draws multi-track + keyframes
-3. Build button writes `*.ramodbank.json`
+## Test
 
 ```bash
 cargo test -p ramod_runtime --no-default-features
 ```
+
+## Follow-ups
+
+- Editor Overview multi-track drawing + drag instruments
+- Automation applied during playback over time
+- Transition marker runtime jumps
+- FSB5 export after `fsb.rs` restore
