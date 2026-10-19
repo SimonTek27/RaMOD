@@ -9,9 +9,9 @@ edition = "2021"
 
 [package]
 name = "ramod"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "RaMOD — Rust Audio mod: an open-source FSB5 audio middleware (FSB5 read/write, Ogg Vorbis import/export, PCM → Vorbis encoding). Foundation of an open-source FMOD-class stack for Bevy."
+description = "RaMOD — Rust Audio mod: open-source FSB5 middleware (read/write, Ogg Vorbis, pure-Rust encode/decode). Foundation of an FMOD-class stack for Bevy."
 license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/SimonTek27/RaMOD"
@@ -21,12 +21,17 @@ rust-version = "1.85"
 exclude = ["tools/**", "editor/**"]
 
 [features]
-default = ["encoder-rust"]
+default = ["encoder-rust", "decoder-rust"]
+# Pure-Rust Vorbis encoder (rusty_vorbis). Cross-platform, no C/FFI.
 encoder-rust = ["dep:rusty_vorbis"]
+# Pure-Rust Vorbis decoder (lewton).
+decoder-rust = ["dep:lewton"]
+# Legacy Windows path: load libfsbvorbis64.dll at runtime (no cargo dep).
 encoder-dll = []
 
 [dependencies]
 rusty_vorbis = { version = "0.1.1", optional = true, default-features = false }
+lewton = { version = "0.10", optional = true }
 
 [lib]
 name = "ramod"

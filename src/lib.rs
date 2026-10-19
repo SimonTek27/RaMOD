@@ -1,44 +1,24 @@
 //! # RaMOD — Rust Audio mod
 //!
-//! An open-source, dependency-light **middleware for FSB5 sound banks**, derived
-//! from REA reverse engineering of a stock content-authoring tool's codec
-//! library.
+//! An open-source **middleware for FSB5 sound banks**.
 //!
 //! ## Modules
 //!
-//! * [`fsb`] — FSB5 container parsing: header, per-sample headers, metadata
-//!   chunks (`CHANNELS`, `FREQUENCY`, `LOOP`, `VORBISDATA`, …), name table and
-//!   sample payloads.
-//! * [`fsb_write`] — FSB5 writing: [`Fsb5Builder`] for new banks, the in-place
-//!   [`BankEditor`], and the RIFF/WAVE reader.
-//! * [`vorbis`] — Vorbis ↔ Ogg: the bundled setup-header table, the Ogg
-//!   muxer/demuxer, FSB → Ogg export and Ogg → FSB import.
-//! * [`vorbis_encode`] — PCM → Vorbis encoding driven through the stock
-//!   `libfsbvorbis64.dll` encoder, loaded at runtime via `GetProcAddress`, so
-//!   the middleware needs no Vorbis crate.
+//! * [`fsb`] — FSB5 container parsing
+//! * [`fsb_write`] — FSB5 writing, [`BankEditor`], WAV reader
+//! * [`vorbis`] — setup-header table, Ogg mux/demux, FSB ↔ Ogg
+//! * [`vorbis_encode`] — PCM → Vorbis (`encoder-rust` / `encoder-dll`)
+//! * [`vorbis_decode`] — Vorbis → PCM (`decoder-rust` / lewton)
 //!
-//! The crate depends only on the Rust standard library. Decoding, parsing and
-//! writing are fully portable; the Vorbis *encoder* additionally needs the
-//! `libfsbvorbis64.dll` library at runtime (see [`vorbis_encode`]).
-//!
-//! ```
-//! use ramod::{Fsb5, SoundFormat};
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Parse a bank straight from memory.
-//! # let bank_bytes: Vec<u8> = Vec::new();
-//! # if !bank_bytes.is_empty() {
-//! let bank = Fsb5::parse(&bank_bytes)?;
-//! println!("{} samples ({:?})", bank.len(), bank.format);
-//! # }
-//! # Ok(())
-//! # }
-//! ```
+//! Default features enable pure-Rust encode + decode (no proprietary DLLs).
 
 pub mod fsb;
 pub mod fsb_write;
 pub mod vorbis;
 pub mod vorbis_encode;
+
+#[cfg(feature = "decoder-rust")]
+pub mod vorbis_decode;
 
 pub use fsb::{
     Chunk, ChunkType, Fsb5, FsbError, FsbOpenError, Sample, SoundFormat, VorbisData, VorbisPacket,
@@ -49,3 +29,6 @@ pub use vorbis::{
     setup_headers, VorbisExportError, VorbisImport,
 };
 pub use vorbis_encode::{encode, encode_to_bank, DEFAULT_QUALITY};
+
+#[cfg(feature = "decoder-rust")]
+pub use vorbis_decode::{decode_ogg_to_pcm, decode_sample_to_pcm, DecodedPcm, VorbisDecodeError};
