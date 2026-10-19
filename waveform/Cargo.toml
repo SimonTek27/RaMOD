@@ -1,0 +1,13 @@
+[package]
+name = "ramod_waveform"
+version = "0.1.0"
+edition = "2021"
+description = "RaMOD waveform editor core — GoldWave-style PCM editing (open source)"
+license.workspace = true
+repository.workspace = true
+publish = false
+rust-version = "1.85"
+
+[dependencies]
+
+[dev-dependencies]
