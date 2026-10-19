@@ -1,4 +1,4 @@
-//! egui Waveform / GoldWave-style panel (S9 UI) + WAV import.
+//! egui Waveform panel — multi-format import (wav/mp3/ogg/flac).
 
 use egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use ramod_waveform::{PeakMinMax, WaveBuffer};
@@ -13,7 +13,6 @@ pub struct WaveformPanel {
     export_path: String,
     import_path: String,
     gain_db: f32,
-    /// Path of last imported file (for project registration).
     pub last_import_path: Option<PathBuf>,
 }
 
@@ -55,7 +54,7 @@ impl WaveformPanel {
     }
 
     pub fn import_wav(&mut self, path: &Path) -> bool {
-        match WaveBuffer::from_wav(path) {
+        match WaveBuffer::from_file(path) {
             Ok(w) => {
                 self.status = format!(
                     "Imported {} ({} ch, {} Hz, {:.2}s)",
@@ -94,11 +93,11 @@ impl WaveformPanel {
         });
 
         ui.horizontal(|ui| {
-            ui.label("Import WAV");
+            ui.label("Import audio");
             ui.add(
                 egui::TextEdit::singleline(&mut self.import_path)
                     .desired_width(280.0)
-                    .hint_text("path/to/file.wav"),
+                    .hint_text("path/to/file.wav|.mp3|.ogg"),
             );
             if ui.button("Load").clicked() {
                 let p = PathBuf::from(self.import_path.trim());
@@ -108,7 +107,7 @@ impl WaveformPanel {
             }
             if ui
                 .button("Load + add to Assets")
-                .on_hover_text("Import WAV and register in project Assets")
+                .on_hover_text("Import and register in project Assets")
                 .clicked()
             {
                 let p = PathBuf::from(self.import_path.trim());
@@ -162,7 +161,7 @@ impl WaveformPanel {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "No waveform — Import WAV or Demo tone",
+                "No waveform — Import or Demo tone",
                 egui::FontId::proportional(14.0),
                 Color32::from_rgb(120, 120, 130),
             );
@@ -207,7 +206,6 @@ impl WaveformPanel {
         if self.wave.is_none() {
             return;
         }
-
         if ui.button("Cut").clicked() {
             if let Some(w) = self.wave.as_mut() {
                 self.clipboard = w.cut();

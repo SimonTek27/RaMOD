@@ -1,4 +1,4 @@
-//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform + asset import + DnD.
+//! RaMOD Event Editor — S3 + S6 Live Update + S9 Waveform + multi-format import + DnD.
 
 mod audio_bridge;
 mod live_client;
@@ -78,7 +78,7 @@ impl RamodEditorApp {
             selected_event: Some(0),
             selected_asset: Some(0),
             live_update: false,
-            status_msg: "Ready — drag & drop .wav files".into(),
+            status_msg: "Ready — drag & drop wav/mp3/ogg/flac".into(),
             audio,
             intensity: 1.0,
             new_event_name: "event:/sfx/new".into(),
@@ -189,9 +189,9 @@ impl RamodEditorApp {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if ext != "wav" {
+            if !ramod_waveform::is_supported_extension(&ext) {
                 self.status_msg = format!(
-                    "Unsupported drop: {} (only .wav for now)",
+                    "Unsupported drop: {} (wav/mp3/ogg/flac)",
                     path.display()
                 );
                 continue;
@@ -233,7 +233,7 @@ impl eframe::App for RamodEditorApp {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "Drop WAV files to import",
+                            "Drop WAV / MP3 / OGG / FLAC to import",
                             egui::FontId::proportional(28.0),
                             egui::Color32::WHITE,
                         );
@@ -370,7 +370,7 @@ impl eframe::App for RamodEditorApp {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.asset_import_path)
                                     .desired_width(160.0)
-                                    .hint_text("file.wav"),
+                                    .hint_text("file.wav / .mp3 / .ogg"),
                             );
                             if ui.button("Import").clicked() {
                                 let p = PathBuf::from(self.asset_import_path.trim());
@@ -386,7 +386,7 @@ impl eframe::App for RamodEditorApp {
                                 }
                             }
                         });
-                        ui.label("or drag & drop .wav onto the window");
+                        ui.label("or drag & drop wav/mp3/ogg/flac");
                         if ui.button("+ Demo 880 Hz").clicked() {
                             self.project.add_asset_demo(
                                 format!("tone_{}", self.project.assets.len()),
@@ -423,7 +423,7 @@ impl eframe::App for RamodEditorApp {
             if let Some(p) = self.selected_path() {
                 ui.label(p);
             }
-            ui.weak("Drag & drop .wav onto the window · Assets → Import · Waveform panel");
+            ui.weak("Drag & drop wav/mp3/ogg/flac · Assets → Import · Waveform panel");
         });
 
         if matches!(self.transport, TransportState::Playing) {
