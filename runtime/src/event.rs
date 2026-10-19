@@ -30,13 +30,10 @@ impl From<&str> for EventPath {
 #[derive(Debug, Clone)]
 pub struct EventDescription {
     pub path: EventPath,
-    /// Primary sample for S2 single-instrument events.
     pub buffer: BufferHandle,
     pub is_3d: bool,
     pub attenuation: Attenuation,
-    /// Default parameter values by name.
     pub parameters: HashMap<String, f32>,
-    /// Higher = more important for virtual voice steal.
     pub priority: i32,
     pub looping: bool,
 }
@@ -139,7 +136,6 @@ impl EventInstance {
     }
 }
 
-/// Registry of event descriptions + active instances.
 pub(crate) struct EventSystem {
     descriptions: HashMap<String, EventDescription>,
     instances: HashMap<u64, EventInstance>,
@@ -205,6 +201,10 @@ impl EventSystem {
 
     pub fn release_instance(&mut self, id: u64) -> Option<EventInstance> {
         self.instances.remove(&id)
+    }
+
+    pub fn instances_reinsert(&mut self, inst: EventInstance) {
+        self.instances.insert(inst.id, inst);
     }
 
     pub fn instances_mut(&mut self) -> impl Iterator<Item = &mut EventInstance> {

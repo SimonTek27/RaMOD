@@ -10,6 +10,8 @@ pub enum RuntimeError {
     InvalidHandle,
     /// Voice pool exhausted.
     NoFreeVoice,
+    /// Event path not registered.
+    EventNotFound,
     /// Audio device / backend failure.
     Device(String),
     /// Feature not available in this build.
@@ -22,6 +24,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::InvalidBuffer => f.write_str("invalid PCM buffer"),
             RuntimeError::InvalidHandle => f.write_str("invalid handle"),
             RuntimeError::NoFreeVoice => f.write_str("no free voice"),
+            RuntimeError::EventNotFound => f.write_str("event not found"),
             RuntimeError::Device(msg) => write!(f, "audio device: {msg}"),
             RuntimeError::BackendUnavailable => {
                 f.write_str("audio backend unavailable (enable feature backend-cpal)")

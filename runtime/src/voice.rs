@@ -31,13 +31,15 @@ pub enum VoiceState {
 struct Voice {
     id: u64,
     buffer: BufferHandle,
-    /// Playback cursor in output frames (after rate conversion).
     cursor: f64,
     gain: f32,
+    pitch: f32,
     looped: bool,
     src_rate: u32,
     src_channels: u16,
     src_frames: usize,
+    priority: i32,
+    audibility: f32,
     alive: bool,
 }
 
@@ -65,6 +67,8 @@ impl VoicePool {
         buf: &PcmBuffer,
         params: PlayParams,
         _out_rate: u32,
+        priority: i32,
+        audibility: f32,
     ) -> Result<VoiceHandle, ()> {
         self.reap_finished();
         if self.active_count() >= self.max {
@@ -75,13 +79,40 @@ impl VoicePool {
             buffer,
             cursor: 0.0,
             gain: params.gain.max(0.0),
+            pitch: 1.0,
             looped: params.looped,
             src_rate: buf.sample_rate,
             src_channels: buf.channels,
             src_frames: buf.frames(),
+            priority,
+            audibility,
             alive: true,
         });
         Ok(VoiceHandle(id))
+    }
+
+    /// Steal the least important voice if `priority`/`audibility` wins.
+    pub fn steal_lowest(&mut self, priority: i32, audibility: f32) -> bool {
+        let score = |v: &Voice| v.priority as f32 * 1000.0 + v.audibility;
+        let new_score = priority as f32 * 1000.0 + audibility;
+        let victim = self
+            .voices
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.alive)
+            .min_by(|a, b| {
+                score(a.1)
+                    .partial_cmp(&score(b.1))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        if let Some((idx, v)) = victim {
+            if score(v) < new_score {
+                self.voices[idx].alive = false;
+                self.reap_finished();
+                return true;
+            }
+        }
+        false
     }
 
     pub fn stop(&mut self, h: VoiceHandle) {
@@ -93,6 +124,12 @@ impl VoicePool {
     pub fn set_gain(&mut self, h: VoiceHandle, gain: f32) {
         if let Some(v) = self.voices.iter_mut().find(|v| v.id == h.0) {
             v.gain = gain;
+        }
+    }
+
+    pub fn set_pitch(&mut self, h: VoiceHandle, pitch: f32) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == h.0) {
+            v.pitch = pitch.clamp(0.25, 4.0);
         }
     }
 
@@ -121,7 +158,7 @@ impl VoicePool {
                 voice.alive = false;
                 continue;
             }
-            let ratio = out_rate as f64 / voice.src_rate.max(1) as f64;
+            let ratio = (out_rate as f64 / voice.src_rate.max(1) as f64) / voice.pitch as f64;
 
             for f in 0..frames {
                 let src_pos = voice.cursor / ratio;

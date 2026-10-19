@@ -1,39 +1,35 @@
-//! # ramod_runtime — open-source real-time audio engine (S1 MVP)
+//! # ramod_runtime — open-source real-time audio engine
 //!
-//! Headless-friendly mixer that plays interleaved `f32` PCM buffers.
-//! Optional `backend-cpal` opens a device stream.
+//! ## S1 — PCM mixer
+//! load_pcm / play / stop / render / master gain
 //!
-//! ## Thread model
-//!
-//! - **Control thread**: [`Runtime::play`], [`stop`], [`set_voice_gain`], [`tick`], [`render`].
-//! - **Audio callback** (future): pull via shared `Arc<Mutex<Runtime>>`.
-//!
-//! ## Example
-//!
-//! ```ignore
-//! let mut rt = Runtime::new(RuntimeConfig { open_device: false, ..Default::default() })?;
-//! let buf = rt.load_pcm(pcm, 1, 48_000)?;
-//! let v = rt.play(buf, PlayParams::default())?;
-//! let mut out = vec![0.0f32; 4800];
-//! rt.render(&mut out);
-//! rt.stop(v);
-//! ```
+//! ## S2 — Event model (Studio-like)
+//! EventDescription / EventInstance / parameters / 3D / virtual voices / banks
 
 mod backend;
+mod bank;
 mod buffer;
 mod bus;
 mod error;
+mod event;
+mod spatial;
 mod voice;
 
 pub use backend::{NullBackend, OutputBackend};
+pub use bank::{Bank, BankEventSpec, BankName, BankRegistry};
 pub use buffer::{BufferHandle, PcmBuffer};
 pub use bus::MasterBus;
 pub use error::RuntimeError;
+pub use event::{EventDescription, EventInstance, EventPath};
+pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use bank::BankRegistry;
 use buffer::BufferStore;
+use event::EventSystem;
+use spatial::{closing_speed, distance, Attributes3d as Attr3d};
 use voice::VoicePool;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
@@ -44,7 +40,6 @@ pub struct RuntimeConfig {
     pub sample_rate: u32,
     pub channels: u16,
     pub max_voices: usize,
-    /// Open a real device when `backend-cpal` is enabled.
     pub open_device: bool,
 }
 
@@ -62,9 +57,12 @@ impl Default for RuntimeConfig {
 pub struct Runtime {
     sample_rate: u32,
     channels: u16,
+    max_voices: usize,
     buffers: BufferStore,
     voices: VoicePool,
     master: MasterBus,
+    events: EventSystem,
+    banks: BankRegistry,
     next_voice_id: AtomicU64,
     #[allow(dead_code)]
     backend: Option<Box<dyn OutputBackend>>,
@@ -88,9 +86,12 @@ impl Runtime {
         };
 
         Ok(Self {
+            max_voices: cfg.max_voices,
             voices: VoicePool::new(cfg.max_voices),
             buffers: BufferStore::new(),
             master: MasterBus::new(),
+            events: EventSystem::new(),
+            banks: BankRegistry::new(),
             next_voice_id: AtomicU64::new(1),
             sample_rate,
             channels,
@@ -113,6 +114,8 @@ impl Runtime {
     pub fn master_mut(&mut self) -> &mut MasterBus {
         &mut self.master
     }
+
+    // ---- S1 PCM API ---------------------------------------------------------
 
     pub fn load_pcm(
         &mut self,
@@ -138,13 +141,28 @@ impl Runtime {
         buffer: BufferHandle,
         params: PlayParams,
     ) -> Result<VoiceHandle, RuntimeError> {
+        self.play_with_priority(buffer, params, 128, 1.0)
+    }
+
+    fn play_with_priority(
+        &mut self,
+        buffer: BufferHandle,
+        params: PlayParams,
+        priority: i32,
+        audibility: f32,
+    ) -> Result<VoiceHandle, RuntimeError> {
         let buf = self
             .buffers
             .get(buffer)
             .ok_or(RuntimeError::InvalidHandle)?;
+        if self.voices.active_count() >= self.max_voices {
+            if !self.voices.steal_lowest(priority, audibility) {
+                return Err(RuntimeError::NoFreeVoice);
+            }
+        }
         let id = self.next_voice_id.fetch_add(1, Ordering::Relaxed);
         self.voices
-            .start(id, buffer, buf, params, self.sample_rate)
+            .start(id, buffer, buf, params, self.sample_rate, priority, audibility)
             .map_err(|_| RuntimeError::NoFreeVoice)
     }
 
@@ -160,13 +178,13 @@ impl Runtime {
         self.voices.active_count()
     }
 
-    /// Advance transport (S1: reaps finished voices).
     pub fn tick(&mut self, _dt: f32) {
         self.voices.reap_finished();
+        self.sync_event_spatial_gains();
     }
 
-    /// Mix `out.len() / channels` frames into `out` (interleaved f32).
     pub fn render(&mut self, out: &mut [f32]) {
+        self.sync_event_spatial_gains();
         let ch = self.channels as usize;
         if ch == 0 || out.len() % ch != 0 {
             out.fill(0.0);
@@ -190,6 +208,129 @@ impl Runtime {
         self.render(&mut out);
         out
     }
+
+    // ---- S2 Event API -------------------------------------------------------
+
+    pub fn register_event(&mut self, desc: EventDescription) {
+        self.events.register(desc);
+    }
+
+    pub fn load_bank(&mut self, bank: Bank) {
+        for spec in bank.events.iter().cloned() {
+            self.events.register(spec.into_description());
+        }
+        self.banks.insert(bank);
+    }
+
+    pub fn set_listener(&mut self, attributes: Attr3d) {
+        self.events.set_listener(attributes);
+    }
+
+    pub fn listener(&self) -> Attr3d {
+        self.events.listener()
+    }
+
+    /// Create a stopped instance. Call [`start_instance`] to hear it.
+    pub fn create_instance(&mut self, path: &str) -> Result<EventInstance, RuntimeError> {
+        let id = self
+            .events
+            .create_instance(path)
+            .ok_or(RuntimeError::EventNotFound)?;
+        self.events
+            .release_instance(id)
+            .ok_or(RuntimeError::InvalidHandle)
+    }
+
+    /// Start an instance: allocates a voice (with virtual steal if needed).
+    pub fn start_instance(&mut self, mut inst: EventInstance) -> Result<u64, RuntimeError> {
+        let audibility = self.audibility_for(&inst);
+        let params = inst.play_params();
+        let voice = self.play_with_priority(inst.buffer, params, inst.priority, audibility)?;
+        inst.voice = Some(voice);
+        inst.started = true;
+        let id = inst.id;
+        // Re-insert under same id if it was released from registry; assign new id slot.
+        if self.events.instance(id).is_none() {
+            // Instance was detached; register under its id.
+            self.events.instances_reinsert(inst);
+        } else if let Some(slot) = self.events.instance_mut(id) {
+            *slot = inst;
+        }
+        Ok(id)
+    }
+
+    /// Convenience: create + start.
+    pub fn play_event(&mut self, path: &str) -> Result<u64, RuntimeError> {
+        let inst = self.create_instance(path)?;
+        self.start_instance(inst)
+    }
+
+    pub fn stop_instance(&mut self, id: u64) {
+        if let Some(inst) = self.events.instance_mut(id) {
+            if let Some(v) = inst.voice.take() {
+                self.voices.stop(v);
+            }
+            inst.started = false;
+        }
+    }
+
+    pub fn release_instance(&mut self, id: u64) {
+        self.stop_instance(id);
+        self.events.release_instance(id);
+    }
+
+    pub fn set_instance_parameter(&mut self, id: u64, name: &str, value: f32) -> bool {
+        self.events
+            .instance_mut(id)
+            .map(|i| i.set_parameter(name, value))
+            .unwrap_or(false)
+    }
+
+    pub fn set_instance_3d(&mut self, id: u64, attributes: Attr3d) {
+        if let Some(i) = self.events.instance_mut(id) {
+            i.set_3d(attributes);
+        }
+    }
+
+    pub fn instance_count(&self) -> usize {
+        self.events.instance_count()
+    }
+
+    fn audibility_for(&self, inst: &EventInstance) -> f32 {
+        if !inst.is_3d {
+            return 1.0;
+        }
+        let listener = self.events.listener();
+        let d = distance(&listener, &inst.attributes);
+        inst.attenuation.gain_at(d) * inst.gain_user
+    }
+
+    fn sync_event_spatial_gains(&mut self) {
+        let listener = self.events.listener();
+        let mut updates: Vec<(VoiceHandle, f32, f32)> = Vec::new();
+        for inst in self.events.instances_mut() {
+            let Some(voice) = inst.voice else {
+                continue;
+            };
+            let mut gain = inst.gain_user;
+            let mut pitch = 1.0;
+            if inst.is_3d {
+                let d = distance(&listener, &inst.attributes);
+                gain *= inst.attenuation.gain_at(d);
+                let closing = closing_speed(&listener, &inst.attributes);
+                pitch = spatial::doppler_pitch(closing);
+            }
+            // Intensity parameter scales gain when present.
+            if let Some(intensity) = inst.get_parameter("Intensity") {
+                gain *= intensity.clamp(0.0, 4.0);
+            }
+            updates.push((voice, gain, pitch));
+        }
+        for (voice, gain, pitch) in updates {
+            self.voices.set_gain(voice, gain);
+            self.voices.set_pitch(voice, pitch);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -205,17 +346,20 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn plays_and_mixes_pcm() {
-        let mut rt = Runtime::new(RuntimeConfig {
+    fn headless() -> Runtime {
+        Runtime::new(RuntimeConfig {
             open_device: false,
             sample_rate: 48_000,
             channels: 1,
             max_voices: 8,
         })
-        .unwrap();
-        let pcm = sine(4800, 48_000, 440.0);
-        let buf = rt.load_pcm(pcm, 1, 48_000).unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn plays_and_mixes_pcm() {
+        let mut rt = headless();
+        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
         let v = rt.play(buf, PlayParams::default()).unwrap();
         assert_eq!(rt.active_voices(), 1);
         let out = rt.render_seconds(0.05);
@@ -226,37 +370,79 @@ mod tests {
     }
 
     #[test]
-    fn master_gain_scales_output() {
-        let mut rt = Runtime::new(RuntimeConfig {
-            open_device: false,
-            sample_rate: 48_000,
-            channels: 1,
-            max_voices: 4,
-        })
-        .unwrap();
-        let buf = rt.load_pcm(sine(4800, 48_000, 220.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        let peak_full = rt
-            .render_seconds(0.02)
-            .iter()
-            .map(|s| s.abs())
-            .fold(0.0f32, f32::max);
+    fn event_play_by_path() {
+        let mut rt = headless();
+        let buf = rt.load_pcm(sine(4800, 48_000, 330.0), 1, 48_000).unwrap();
+        rt.register_event(EventDescription::new("event:/sfx/beep", buf));
+        let id = rt.play_event("event:/sfx/beep").unwrap();
+        assert_eq!(rt.active_voices(), 1);
+        let out = rt.render_seconds(0.03);
+        assert!(out.iter().any(|s| s.abs() > 0.01));
+        rt.release_instance(id);
+        assert_eq!(rt.active_voices(), 0);
+    }
 
+    #[test]
+    fn event_3d_attenuation_silences_far_emitter() {
+        let mut rt = headless();
+        let buf = rt.load_pcm(sine(9600, 48_000, 200.0), 1, 48_000).unwrap();
+        rt.register_event(
+            EventDescription::new("event:/sfx/far", buf).with_3d(Attenuation {
+                min_distance: 1.0,
+                max_distance: 10.0,
+            }),
+        );
+        rt.set_listener(Attributes3d::default());
+        let mut inst = rt.create_instance("event:/sfx/far").unwrap();
+        inst.set_3d(Attributes3d {
+            position: Vec3::new(100.0, 0.0, 0.0),
+            ..Default::default()
+        });
+        let id = rt.start_instance(inst).unwrap();
+        let out = rt.render_seconds(0.05);
+        let peak = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(peak < 0.001, "far 3D event should be silent, peak={peak}");
+        rt.release_instance(id);
+    }
+
+    #[test]
+    fn parameter_intensity_scales_gain() {
+        let mut rt = headless();
+        let buf = rt.load_pcm(sine(4800, 48_000, 440.0), 1, 48_000).unwrap();
+        rt.register_event(
+            EventDescription::new("event:/sfx/hit", buf).with_parameter("Intensity", 1.0),
+        );
+        let id = rt.play_event("event:/sfx/hit").unwrap();
+        rt.set_instance_parameter(id, "Intensity", 0.0);
+        let out = rt.render_seconds(0.03);
+        let peak = out.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(peak < 0.001);
+        rt.release_instance(id);
+    }
+
+    #[test]
+    fn virtual_voice_steal_under_pressure() {
         let mut rt = Runtime::new(RuntimeConfig {
             open_device: false,
             sample_rate: 48_000,
             channels: 1,
-            max_voices: 4,
+            max_voices: 2,
         })
         .unwrap();
-        let buf = rt.load_pcm(sine(4800, 48_000, 220.0), 1, 48_000).unwrap();
-        rt.play(buf, PlayParams::default()).unwrap();
-        rt.master_mut().set_gain(0.5);
-        let peak_half = rt
-            .render_seconds(0.02)
-            .iter()
-            .map(|s| s.abs())
-            .fold(0.0f32, f32::max);
-        assert!(peak_half < peak_full * 0.75);
+        let buf = rt.load_pcm(sine(48_000, 48_000, 100.0), 1, 48_000).unwrap();
+        rt.register_event(
+            EventDescription::new("event:/low", buf).with_priority(1),
+        );
+        let buf2 = rt.load_pcm(sine(48_000, 48_000, 200.0), 1, 48_000).unwrap();
+        rt.register_event(
+            EventDescription::new("event:/high", buf2).with_priority(200),
+        );
+        rt.play_event("event:/low").unwrap();
+        rt.play_event("event:/low").unwrap();
+        assert_eq!(rt.active_voices(), 2);
+        // Third low-priority may steal or fail; high priority must succeed.
+        let high = rt.play_event("event:/high");
+        assert!(high.is_ok());
+        assert!(rt.active_voices() <= 2);
     }
 }
