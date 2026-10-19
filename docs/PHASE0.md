@@ -5,7 +5,7 @@ Tracking foundation work toward a production-ready pure-Rust FSB5 middleware.
 ## Done
 
 - [x] Official design docs + Studio plan + UI reference
-- [x] CLI binary `ramod` — `list` / `info` / `extract` / `build`
+- [x] CLI binary `ramod` — `list` / `info` / `extract` / `build` / **`edit`**
 - [x] **S0.1 Pure-Rust encoder path** (`encoder-rust`, default)
   - [`rusty_vorbis`](https://crates.io/crates/rusty_vorbis) 0.1
   - Setup profile CRC **`0xc2ea917f`** is already present in the 161-header table
@@ -13,6 +13,9 @@ Tracking foundation work toward a production-ready pure-Rust FSB5 middleware.
 - [x] **S0.2 Pure-Rust decoder path** (`decoder-rust`, default)
   - [`lewton`](https://crates.io/crates/lewton) via `decode_sample_to_pcm` / `decode_ogg_to_pcm`
   - FSB5 → `build_ogg` → PCM `f32`
+- [x] **S0.3 CLI `edit`**
+  - rename, loop points, clear-loop, frequency via [`BankEditor`](../src/fsb_write.rs)
+  - optional `--out` (default: overwrite input); re-parse sanity check after rebuild
 
 ## Features
 
@@ -35,7 +38,7 @@ cargo test --no-default-features --features encoder-dll   # Windows legacy only
 
 | ID | Item | Notes |
 |----|------|-------|
-| S0.3 | CLI `edit` / `convert` | rename/loop via BankEditor |
+| S0.3b | CLI `convert` | optional: format / batch (not blocking S1) |
 | S0.4 | Richer errors + more fixtures + fuzz | |
 | S0.5 | crates.io publish 0.2 | After CI green on 1.85+ |
 
@@ -51,6 +54,12 @@ so FSB5 banks produced this way remain playable by reference decoders.
 cargo run --bin ramod -- list path/to/bank.fsb
 cargo run --bin ramod -- extract bank.fsb --index 0 --out sample.ogg
 cargo run --bin ramod -- build --out out.fsb a.wav b.wav
+
+# Metadata edit (payload unchanged)
+cargo run --bin ramod -- edit bank.fsb --index 0 --name explosion
+cargo run --bin ramod -- edit bank.fsb --index 0 --loop 0:12000 --out out.fsb
+cargo run --bin ramod -- edit bank.fsb --index 0 --clear-loop
+cargo run --bin ramod -- edit bank.fsb --index 0 --frequency 48000
 ```
 
 See [STUDIO_DEV_PLAN.md](STUDIO_DEV_PLAN.md) Phase S0.
