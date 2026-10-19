@@ -1,0 +1,17 @@
+[package]
+name = "ramod_runtime"
+version = "0.1.0"
+edition = "2021"
+description = "RaMOD real-time audio runtime — FMOD Core–class mixer (open source)"
+license.workspace = true
+repository.workspace = true
+publish = false
+rust-version = "1.85"
+
+[features]
+default = ["backend-cpal"]
+# Real device output via cpal. Disable for headless / CI (null backend only).
+backend-cpal = ["dep:cpal"]
+
+[dependencies]
+cpal = { version = "0.15", optional = true }
