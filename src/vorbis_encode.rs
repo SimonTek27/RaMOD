@@ -12,6 +12,9 @@
 //!
 //! The setup header CRC32 must be present in the bundled 161-header table so that
 //! commercial and reference FSB5 decoders can play the bank.
+//!
+//! `rusty_vorbis` embeds a fixed setup whose zlib CRC32 is **0xc2ea917f** (present
+//! in the table).
 
 use crate::vorbis::{bank_from_import, VorbisExportError, VorbisImport};
 
@@ -44,7 +47,6 @@ pub fn encode(
         match rust_backend::encode(pcm, channels, sample_rate, quality) {
             Ok(import) => return Ok(import),
             Err(e) => {
-                // If DLL fallback is available, try it; otherwise propagate.
                 #[cfg(all(windows, feature = "encoder-dll"))]
                 {
                     let _ = e;
@@ -125,19 +127,13 @@ mod rust_backend {
         let mut audio_packets: Vec<Vec<u8>> = Vec::new();
         let mut granules: Vec<u32> = Vec::new();
 
+        // Drain: finish() then next_packet() until Eof (FFmpeg-style).
+        // Header packets may still appear in the queue — skip them (LSB of first byte == 1).
         loop {
-            match enc.next() {
+            match enc.next_packet() {
                 Ok(packet) => {
-                    // Skip the three header packets (pts/duration 0, or first three).
-                    if packet.duration == 0 && packet.pts == 0 && audio_packets.is_empty() {
-                        // Could be a header; headers were already taken via headers().
-                        // rusty_vorbis also yields them from next() — skip non-audio.
-                        if packet.data.first().is_some_and(|b| b & 1 == 1) {
-                            continue; // header packet (LSB of first byte is 1)
-                        }
-                    }
                     if packet.data.first().is_some_and(|b| b & 1 == 1) {
-                        continue; // header
+                        continue;
                     }
                     let granule = if packet.pts < 0 {
                         granules.last().copied().unwrap_or(0)
@@ -329,8 +325,8 @@ mod dll_backend {
         }
         let mut roots: Vec<PathBuf> = Vec::new();
         for base in [
-            r"C:\Program Files\FMOD SoundSystem",
-            r"C:\Program Files (x86)\FMOD SoundSystem",
+            r"C:\\Program Files\\FMOD SoundSystem",
+            r"C:\\Program Files (x86)\\FMOD SoundSystem",
         ] {
             let base = PathBuf::from(base);
             if let Ok(entries) = std::fs::read_dir(&base) {
@@ -543,10 +539,7 @@ mod tests {
                 return;
             }
             Err(VorbisExportError::UnknownSetupHeader(crc)) => {
-                eprintln!(
-                    "skipping: encoder produced setup CRC {crc:#010x} not in bundled table \
-                     (rusty_vorbis may use a different codebook profile)"
-                );
+                eprintln!("skipping: unknown setup CRC {crc:#010x}");
                 return;
             }
             Err(error) => panic!("encode failed: {error}"),
@@ -593,6 +586,16 @@ mod tests {
         assert_eq!(
             encode(&[0.0, 0.0, 0.0], 2, 44_100, 0.5),
             Err(VorbisExportError::InvalidPcm)
+        );
+    }
+
+    #[test]
+    fn bundled_table_contains_rusty_vorbis_setup_crc() {
+        // setup_q4_stereo.bin from rusty_vorbis 0.1.1
+        const RUSTY_VORBIS_SETUP_CRC: u32 = 0xc2ea_917f;
+        assert!(
+            setup_headers().get(RUSTY_VORBIS_SETUP_CRC).is_some(),
+            "bundled table must contain rusty_vorbis setup CRC {RUSTY_VORBIS_SETUP_CRC:#010x}"
         );
     }
 }
