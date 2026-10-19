@@ -1,6 +1,6 @@
 //! # ramod_runtime — open-source real-time audio engine
 //!
-//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Event Designer
+//! S1 PCM · S2 Events/3D · S4 Mixer · S5 Event Designer · S6 Live Update
 
 mod automation;
 mod backend;
@@ -13,6 +13,9 @@ mod envelope;
 mod error;
 mod event;
 mod export;
+mod live_api;
+#[cfg(feature = "live-update")]
+pub mod live_update;
 mod mixer;
 mod spatial;
 mod voice;
@@ -33,6 +36,9 @@ pub use export::{BankManifest, EventManifestEntry};
 pub use mixer::{Bus, BusId, Meter, Mixer, Snapshot, SnapshotPlayer};
 pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
+
+#[cfg(feature = "live-update")]
+pub use live_update::{LiveUpdateClient, LiveUpdateServer};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -75,7 +81,7 @@ pub struct Runtime {
     master: MasterBus,
     mixer: Mixer,
     snapshots: SnapshotPlayer,
-    events: EventSystem,
+    pub(crate) events: EventSystem,
     banks: BankRegistry,
     designed: Vec<DesignedEvent>,
     next_voice_id: AtomicU64,
@@ -253,20 +259,13 @@ impl Runtime {
         out
     }
 
-    // ---- S2 / S5 events -----------------------------------------------------
-
     pub fn register_event(&mut self, desc: EventDescription) {
         self.events.register(desc);
     }
 
-    /// S5: register a multi-track designed event.
-    ///
-    /// `buffers[slot]` maps instrument buffer slots. Expands into a primary
-    /// `EventDescription` (first instrument) for `play_event` compatibility;
-    /// full multi-voice spawn is available via [`play_designed`].
     pub fn register_designed_event(
         &mut self,
-        mut event: DesignedEvent,
+        event: DesignedEvent,
         buffers: &[BufferHandle],
     ) -> Result<(), RuntimeError> {
         let primary = event
@@ -298,7 +297,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Play all instruments on a designed event (respect probability / scatter).
     pub fn play_designed(
         &mut self,
         path: &str,
@@ -321,7 +319,6 @@ impl Runtime {
                 continue;
             }
             for inst in &track.instruments {
-                // Probability gate (deterministic hash of path+name for tests).
                 let roll = simple_hash(&format!("{}:{}", path, inst.name)) as f32 / u64::MAX as f32;
                 if roll > inst.probability.clamp(0.0, 1.0) {
                     continue;
@@ -576,8 +573,7 @@ mod tests {
         let handles = rt.play_designed("event:/sfx/beep", &[buf]).unwrap();
         assert!(!handles.is_empty());
         let man = rt.export_bank_manifest("Master");
-        let json = man.to_json();
-        assert!(json.contains("event:/sfx/beep"));
+        assert!(man.to_json().contains("event:/sfx/beep"));
     }
 
     #[test]
