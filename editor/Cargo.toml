@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.31", default-features = true }
 egui = "0.31"
+ramod = { path = ".." }
 ramod_runtime = { path = "../runtime", default-features = true, features = ["backend-cpal"] }
 ramod_waveform = { path = "../waveform" }
 serde = { version = "1", features = ["derive"] }
