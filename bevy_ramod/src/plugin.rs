@@ -1,9 +1,10 @@
-//! RamodPlugin + systems + bank registration + parameter sync + despawn cleanup.
+//! RamodPlugin + systems + bank.json / FSB load + parameter sync + despawn cleanup.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
+use ramod::{Fsb5, SoundFormat};
 use ramod_runtime::{
     Attributes3d, Attenuation, EventDescription, Runtime, RuntimeConfig, Vec3 as RVec3,
 };
@@ -74,9 +75,87 @@ impl RamodAudio {
         }
     }
 
+    /// Load `bank.json` **or** `*.fsb` based on extension.
+    pub fn load_bank_path(&mut self, path: &Path) -> Result<usize, String> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "fsb" => self.load_fsb(path),
+            "json" => self.load_bank_dir(path),
+            _ => {
+                // Prefer sibling Master.fsb if path is a directory
+                if path.is_dir() {
+                    let fsb = path.join("Master.fsb");
+                    let json = path.join("bank.json");
+                    if fsb.exists() {
+                        return self.load_fsb(&fsb);
+                    }
+                    if json.exists() {
+                        return self.load_bank_dir(&json);
+                    }
+                }
+                Err(format!(
+                    "unsupported bank path '{}' (want .fsb, bank.json, or bank dir)",
+                    path.display()
+                ))
+            }
+        }
+    }
+
     pub fn load_bank_dir(&mut self, bank_json: &Path) -> Result<usize, String> {
         let bank = RamodBankAsset::from_json_path(bank_json).map_err(|e| e.to_string())?;
         self.register_bank_asset(&bank)
+    }
+
+    /// Register every PCM sample in an FSB5 bank as `event:/fsb/<sample_name>`.
+    pub fn load_fsb(&mut self, path: &Path) -> Result<usize, String> {
+        let bank = Fsb5::from_file(path).map_err(|e| format!("FSB open {}: {e}", path.display()))?;
+        let mut count = 0usize;
+
+        for i in 0..bank.len() {
+            let Some(sample) = bank.sample(i) else {
+                continue;
+            };
+            let event_path = format!("event:/fsb/{}", sample.name);
+
+            let (samples, channels, sample_rate) = match fsb_sample_to_pcm(&bank, i) {
+                Ok(v) => v,
+                Err(e) => {
+                    bevy::log::warn!("FSB sample '{}': {e}", sample.name);
+                    continue;
+                }
+            };
+
+            let buf = match self.runtime.load_pcm(samples, channels, sample_rate) {
+                Ok(b) => b,
+                Err(e) => {
+                    bevy::log::warn!("load_pcm {}: {e}", sample.name);
+                    continue;
+                }
+            };
+
+            let mut desc = EventDescription::new(&event_path, buf)
+                .with_parameter("Intensity", 1.0);
+            if sample.loop_start.is_some() {
+                desc = desc.with_loop(true);
+            }
+            self.runtime.register_event(desc);
+
+            if !self.registered_events.iter().any(|e| e == &event_path) {
+                self.registered_events.push(event_path);
+            }
+            count += 1;
+        }
+
+        bevy::log::info!(
+            "RamodAudio: registered {count}/{} samples from FSB '{}'",
+            bank.len(),
+            path.display()
+        );
+        Ok(count)
     }
 
     pub fn register_bank_asset(&mut self, bank: &RamodBankAsset) -> Result<usize, String> {
@@ -141,6 +220,63 @@ impl RamodAudio {
     pub fn stop_instance(&mut self, id: u64) {
         self.runtime.release_instance(id);
     }
+}
+
+fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), String> {
+    let sample = bank
+        .sample(index)
+        .ok_or_else(|| format!("sample {index} missing"))?;
+    let data = bank
+        .sample_data(index)
+        .ok_or_else(|| format!("sample {index} data missing"))?;
+
+    if !bank.format.is_pcm() {
+        // Try WAV wrapper when the writer/round-trip produced PCM inside non-pcm tag
+        if let Some(wav_bytes) = bank.sample_to_wav(index) {
+            let w = WaveBuffer::from_bytes(&wav_bytes)
+                .or_else(|_| {
+                    // write temp path-less: use wav crate path via WaveBuffer if available
+                    Err("wav decode".into())
+                })
+                .map_err(|e: String| e)?;
+            return Ok((w.samples, w.channels, w.sample_rate));
+        }
+        return Err(format!(
+            "format {:?} not PCM (Vorbis etc. — use bank.json + assets for now)",
+            bank.format
+        ));
+    }
+
+    let channels = sample.channels.max(1) as u16;
+    let rate = if sample.frequency == 0 {
+        48_000
+    } else {
+        sample.frequency
+    };
+
+    let samples = match bank.format {
+        SoundFormat::Pcm8 => data
+            .iter()
+            .map(|&b| (b as i8 as f32) / 128.0)
+            .collect(),
+        SoundFormat::Pcm16 => data
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+            .collect(),
+        SoundFormat::Pcm32 => data
+            .chunks_exact(4)
+            .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2147483648.0)
+            .collect(),
+        SoundFormat::PcmFloat => data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+        other => {
+            return Err(format!("unsupported PCM variant {other:?}"));
+        }
+    };
+
+    Ok((samples, channels, rate))
 }
 
 fn resolve_pcm(base: &Path, ev: &BankEventAsset) -> Result<(Vec<f32>, u16, u32), String> {
@@ -209,8 +345,8 @@ fn process_load_bank(
     q: Query<(Entity, &LoadBank), Added<LoadBank>>,
 ) {
     for (entity, load) in &q {
-        match audio.load_bank_dir(&load.path) {
-            Ok(n) => bevy::log::info!("LoadBank {}: {n} events", load.path.display()),
+        match audio.load_bank_path(&load.path) {
+            Ok(n) => bevy::log::info!("LoadBank {}: {n} events/samples", load.path.display()),
             Err(e) => bevy::log::error!("LoadBank {}: {e}", load.path.display()),
         }
         commands.entity(entity).remove::<LoadBank>();
