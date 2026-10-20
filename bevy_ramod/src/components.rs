@@ -51,15 +51,59 @@ impl AudioEmitter {
     }
 }
 
+/// One Studio-style parameter driven from ECS.
+///
+/// ```ignore
+/// commands.spawn((
+///     SpatialAudioBundle::new("event:/sfx/engine", pos),
+///     PlayOnSpawn,
+///     AudioParameter::new("RPM", 0.5),
+/// ));
+/// ```
+#[derive(Component, Debug, Clone)]
+pub struct AudioParameter {
+    pub name: String,
+    pub value: f32,
+}
+
+impl AudioParameter {
+    pub fn new(name: impl Into<String>, value: f32) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
+}
+
+/// Multiple parameters on one emitter.
+#[derive(Component, Debug, Clone, Default)]
+pub struct AudioParameters(pub Vec<(String, f32)>);
+
+impl AudioParameters {
+    pub fn new(pairs: impl IntoIterator<Item = (impl Into<String>, f32)>) -> Self {
+        Self(
+            pairs
+                .into_iter()
+                .map(|(n, v)| (n.into(), v))
+                .collect(),
+        )
+    }
+
+    pub fn set(&mut self, name: impl Into<String>, value: f32) {
+        let name = name.into();
+        if let Some(slot) = self.0.iter_mut().find(|(n, _)| *n == name) {
+            slot.1 = value;
+        } else {
+            self.0.push((name, value));
+        }
+    }
+}
+
 /// Play the emitter once on spawn (consumed after start).
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct PlayOnSpawn;
 
 /// Load a bank.json from disk on spawn, then remove this component.
-///
-/// ```ignore
-/// commands.spawn(LoadBank::new("build/Master/bank.json"));
-/// ```
 #[derive(Component, Debug, Clone)]
 pub struct LoadBank {
     pub path: PathBuf,

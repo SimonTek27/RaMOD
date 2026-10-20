@@ -7,8 +7,9 @@
 //! ```ignore
 //! commands.spawn(LoadBank::new("build/Master/bank.json"));
 //! commands.spawn((
-//!     SpatialAudioBundle::new("event:/sfx/beep", Vec3::ZERO),
+//!     SpatialAudioBundle::new("event:/sfx/engine", Vec3::ZERO),
 //!     PlayOnSpawn,
+//!     AudioParameter::new("RPM", 0.4),
 //! ));
 //! ```
 
@@ -19,7 +20,8 @@ mod plugin;
 pub mod prelude {
     pub use crate::assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};
     pub use crate::components::{
-        AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, SpatialAudioBundle, Velocity,
+        AudioEmitter, AudioListener, AudioParameter, AudioParameters, LoadBank, PlayOnSpawn,
+        SpatialAudioBundle, Velocity,
     };
     pub use crate::plugin::{RamodAudio, RamodPlugin};
     pub use ramod_runtime::{
@@ -29,6 +31,7 @@ pub mod prelude {
 
 pub use assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};
 pub use components::{
-    AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, SpatialAudioBundle, Velocity,
+    AudioEmitter, AudioListener, AudioParameter, AudioParameters, LoadBank, PlayOnSpawn,
+    SpatialAudioBundle, Velocity,
 };
 pub use plugin::{RamodAudio, RamodPlugin};

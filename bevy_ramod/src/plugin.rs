@@ -1,5 +1,6 @@
-//! RamodPlugin + systems + bank registration.
+//! RamodPlugin + systems + bank registration + parameter sync + despawn cleanup.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
@@ -10,8 +11,24 @@ use ramod_waveform::WaveBuffer;
 
 use crate::assets::{BankEventAsset, RamodBankAsset, RamodBankLoader};
 use crate::components::{
-    AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, Velocity,
+    AudioEmitter, AudioListener, AudioParameter, AudioParameters, LoadBank, PlayOnSpawn, Velocity,
 };
+
+/// Entity → live runtime instance id (for release on despawn).
+#[derive(Resource, Default)]
+pub struct InstanceMap {
+    map: HashMap<Entity, u64>,
+}
+
+impl InstanceMap {
+    fn insert(&mut self, entity: Entity, id: u64) {
+        self.map.insert(entity, id);
+    }
+
+    fn remove(&mut self, entity: Entity) -> Option<u64> {
+        self.map.remove(&entity)
+    }
+}
 
 /// Global audio runtime resource.
 #[derive(Resource)]
@@ -38,7 +55,6 @@ impl RamodAudio {
         })
     }
 
-    /// Register a one-shot tone event (demo without bank files).
     pub fn register_demo_tone(&mut self, path: &str, freq_hz: f32) {
         let rate = self.runtime.sample_rate();
         let frames = rate as usize / 2;
@@ -58,13 +74,11 @@ impl RamodAudio {
         }
     }
 
-    /// Load `bank.json` from disk (editor Build output) and register all events.
     pub fn load_bank_dir(&mut self, bank_json: &Path) -> Result<usize, String> {
         let bank = RamodBankAsset::from_json_path(bank_json).map_err(|e| e.to_string())?;
         self.register_bank_asset(&bank)
     }
 
-    /// Register events from an already-parsed [`RamodBankAsset`].
     pub fn register_bank_asset(&mut self, bank: &RamodBankAsset) -> Result<usize, String> {
         let base = bank
             .base_dir
@@ -169,6 +183,7 @@ impl Plugin for RamodPlugin {
         });
 
         app.insert_resource(audio)
+            .init_resource::<InstanceMap>()
             .init_asset::<RamodBankAsset>()
             .register_asset_loader(RamodBankLoader)
             .add_systems(
@@ -178,6 +193,7 @@ impl Plugin for RamodPlugin {
                     sync_listener,
                     start_emitters,
                     sync_emitter_volume,
+                    sync_audio_parameters,
                     sync_emitters_3d,
                     cleanup_despawned_emitters,
                     audio_tick_render,
@@ -228,9 +244,19 @@ fn sync_listener(
 fn start_emitters(
     mut commands: Commands,
     mut audio: ResMut<RamodAudio>,
-    mut q: Query<(Entity, &mut AudioEmitter, &GlobalTransform), Added<PlayOnSpawn>>,
+    mut instances: ResMut<InstanceMap>,
+    mut q: Query<
+        (
+            Entity,
+            &mut AudioEmitter,
+            &GlobalTransform,
+            Option<&AudioParameter>,
+            Option<&AudioParameters>,
+        ),
+        Added<PlayOnSpawn>,
+    >,
 ) {
-    for (entity, mut emitter, gt) in &mut q {
+    for (entity, mut emitter, gt, one_param, multi) in &mut q {
         if emitter.instance_id.is_some() {
             commands.entity(entity).remove::<PlayOnSpawn>();
             continue;
@@ -254,7 +280,18 @@ fn start_emitters(
                 let _ = audio
                     .runtime
                     .set_instance_parameter(id, "Intensity", emitter.volume);
+                if let Some(p) = one_param {
+                    let _ = audio
+                        .runtime
+                        .set_instance_parameter(id, &p.name, p.value);
+                }
+                if let Some(ps) = multi {
+                    for (name, value) in &ps.0 {
+                        let _ = audio.runtime.set_instance_parameter(id, name, *value);
+                    }
+                }
                 emitter.instance_id = Some(id);
+                instances.insert(entity, id);
             }
             Err(e) => {
                 bevy::log::warn!("play_event {}: {e}", emitter.event);
@@ -272,6 +309,31 @@ fn sync_emitter_volume(mut audio: ResMut<RamodAudio>, q: Query<&AudioEmitter>) {
         let _ = audio
             .runtime
             .set_instance_parameter(id, "Intensity", emitter.volume);
+    }
+}
+
+fn sync_audio_parameters(
+    mut audio: ResMut<RamodAudio>,
+    q: Query<(
+        &AudioEmitter,
+        Option<&AudioParameter>,
+        Option<&AudioParameters>,
+    )>,
+) {
+    for (emitter, one, multi) in &q {
+        let Some(id) = emitter.instance_id else {
+            continue;
+        };
+        if let Some(p) = one {
+            let _ = audio
+                .runtime
+                .set_instance_parameter(id, &p.name, p.value);
+        }
+        if let Some(ps) = multi {
+            for (name, value) in &ps.0 {
+                let _ = audio.runtime.set_instance_parameter(id, name, *value);
+            }
+        }
     }
 }
 
@@ -309,12 +371,15 @@ fn sync_emitters_3d(
 
 fn cleanup_despawned_emitters(
     mut audio: ResMut<RamodAudio>,
+    mut instances: ResMut<InstanceMap>,
     mut removed: RemovedComponents<AudioEmitter>,
 ) {
-    // When emitters despawn we cannot read instance_id; track via a side channel.
-    // For now, ReleasedComponents only gives Entity — instance cleanup is best-effort
-    // via a mirror resource updated in start_emitters.
-    let _ = (&mut audio, &mut removed);
+    for entity in removed.read() {
+        if let Some(id) = instances.remove(entity) {
+            audio.runtime.release_instance(id);
+            bevy::log::debug!("released instance {id} for despawned {entity:?}");
+        }
+    }
 }
 
 fn audio_tick_render(time: Res<Time>, mut audio: ResMut<RamodAudio>) {
