@@ -1,4 +1,4 @@
-//! RaMOD Event Editor — multi-format import, DnD, audible preview.
+//! RaMOD Event Editor — multi-format import, DnD, audible preview, bank build.
 
 mod audio_bridge;
 mod live_client;
@@ -75,7 +75,7 @@ impl RamodEditorApp {
             selected_event: Some(0),
             selected_asset: Some(0),
             live_update: false,
-            status_msg: "Ready — drag & drop wav/mp3/ogg/flac".into(),
+            status_msg: "Ready — import asset → assign → build bank".into(),
             audio,
             intensity: 1.0,
             live_client: None,
@@ -140,6 +140,40 @@ impl RamodEditorApp {
         self.selected_asset = Some(idx);
         self.browser_tab = BrowserTab::Assets;
         self.status_msg = format!("Asset added: {}", path.display());
+    }
+
+    fn assign_selected_asset_to_event(&mut self) {
+        let (Some(ei), Some(ai)) = (self.selected_event, self.selected_asset) else {
+            self.status_msg = "Select an event and an asset first".into();
+            return;
+        };
+        match self.project.assign_asset_to_event(ei, ai) {
+            Ok(()) => {
+                let ev = &self.project.events[ei].path;
+                let asset = &self.project.assets[ai].name;
+                self.status_msg = format!("Assigned {asset} → {ev}");
+                if let Some(a) = self.audio.as_mut() {
+                    a.sync_project(&self.project);
+                }
+            }
+            Err(e) => self.status_msg = e,
+        }
+    }
+
+    fn build_bank(&mut self) {
+        let bank = self
+            .project
+            .banks
+            .first()
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| "Master".into());
+        let out = PathBuf::from("build");
+        match self.project.export_bank_build(&bank, &out) {
+            Ok(path) => {
+                self.status_msg = format!("Built bank → {}", path.display());
+            }
+            Err(e) => self.status_msg = format!("Build failed: {e}"),
+        }
     }
 
     fn open_asset_in_waveform(&mut self, index: usize) {
@@ -241,6 +275,9 @@ impl eframe::App for RamodEditorApp {
                 ui.menu_button("File", |ui| {
                     if ui.button("Save").clicked() {
                         self.save_project();
+                    }
+                    if ui.button("Build bank").clicked() {
+                        self.build_bank();
                     }
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -363,9 +400,25 @@ impl eframe::App for RamodEditorApp {
                 ui.separator();
                 match self.browser_tab {
                     BrowserTab::Events => {
+                        if ui.button("Assign selected asset → event").clicked() {
+                            self.assign_selected_asset_to_event();
+                        }
+                        if ui.button("+ Event").clicked() {
+                            self.project.add_event(format!(
+                                "event:/sfx/new_{}",
+                                self.project.events.len()
+                            ));
+                        }
+                        ui.separator();
                         for (i, ev) in self.project.events.iter().enumerate() {
+                            let asset_label = ev
+                                .asset_index
+                                .and_then(|ai| self.project.assets.get(ai))
+                                .map(|a| a.name.as_str())
+                                .unwrap_or("—");
+                            let label = format!("{}  [{}]", ev.path, asset_label);
                             if ui
-                                .selectable_label(self.selected_event == Some(i), &ev.path)
+                                .selectable_label(self.selected_event == Some(i), label)
                                 .clicked()
                             {
                                 self.selected_event = Some(i);
@@ -373,8 +426,19 @@ impl eframe::App for RamodEditorApp {
                         }
                     }
                     BrowserTab::Banks => {
+                        if ui.button("Build bank").clicked() {
+                            self.build_bank();
+                        }
+                        ui.separator();
                         for b in &self.project.banks {
                             ui.label(&b.name);
+                            let n = self
+                                .project
+                                .events
+                                .iter()
+                                .filter(|e| e.bank == b.name)
+                                .count();
+                            ui.weak(format!("  {n} events"));
                         }
                     }
                     BrowserTab::Assets => {
@@ -429,7 +493,7 @@ impl eframe::App for RamodEditorApp {
             if let Some(p) = self.selected_path() {
                 ui.label(p);
             }
-            ui.weak("Drag & drop audio · Waveform ▶ Preview · Transport ▶ event");
+            ui.weak("Import asset → Assign to event → Build bank · Waveform ▶ Preview");
         });
 
         if matches!(self.transport, TransportState::Playing) {
