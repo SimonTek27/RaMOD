@@ -1,0 +1,17 @@
+{
+  "name": "Master",
+  "project": "sample",
+  "events": [
+    {
+      "path": "event:/sfx/beep",
+      "asset": "demo",
+      "asset_file": null,
+      "looping": false,
+      "is_3d": true,
+      "priority": 128,
+      "min_distance": 1.0,
+      "max_distance": 50.0,
+      "parameters": [["Intensity", 1.0]]
+    }
+  ]
+}

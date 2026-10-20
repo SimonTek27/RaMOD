@@ -19,6 +19,7 @@ bevy = { version = "0.15", default-features = false, features = [
     "multi_threaded",
 ] }
 ramod_runtime = { path = "../runtime", default-features = false, features = ["backend-cpal"] }
+ramod_waveform = { path = "../waveform" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -26,3 +27,7 @@ thiserror = "2"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+
+[[example]]
+name = "load_bank"
+path = "examples/load_bank.rs"
