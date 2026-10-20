@@ -86,7 +86,6 @@ impl RamodAudio {
             "fsb" => self.load_fsb(path),
             "json" => self.load_bank_dir(path),
             _ => {
-                // Prefer sibling Master.fsb if path is a directory
                 if path.is_dir() {
                     let fsb = path.join("Master.fsb");
                     let json = path.join("bank.json");
@@ -112,7 +111,8 @@ impl RamodAudio {
 
     /// Register every PCM sample in an FSB5 bank as `event:/fsb/<sample_name>`.
     pub fn load_fsb(&mut self, path: &Path) -> Result<usize, String> {
-        let bank = Fsb5::from_file(path).map_err(|e| format!("FSB open {}: {e}", path.display()))?;
+        let bank =
+            Fsb5::from_file(path).map_err(|e| format!("FSB open {}: {e}", path.display()))?;
         let mut count = 0usize;
 
         for i in 0..bank.len() {
@@ -137,8 +137,8 @@ impl RamodAudio {
                 }
             };
 
-            let mut desc = EventDescription::new(&event_path, buf)
-                .with_parameter("Intensity", 1.0);
+            let mut desc =
+                EventDescription::new(&event_path, buf).with_parameter("Intensity", 1.0);
             if sample.loop_start.is_some() {
                 desc = desc.with_loop(true);
             }
@@ -230,23 +230,6 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
         .sample_data(index)
         .ok_or_else(|| format!("sample {index} data missing"))?;
 
-    if !bank.format.is_pcm() {
-        // Try WAV wrapper when the writer/round-trip produced PCM inside non-pcm tag
-        if let Some(wav_bytes) = bank.sample_to_wav(index) {
-            let w = WaveBuffer::from_bytes(&wav_bytes)
-                .or_else(|_| {
-                    // write temp path-less: use wav crate path via WaveBuffer if available
-                    Err("wav decode".into())
-                })
-                .map_err(|e: String| e)?;
-            return Ok((w.samples, w.channels, w.sample_rate));
-        }
-        return Err(format!(
-            "format {:?} not PCM (Vorbis etc. — use bank.json + assets for now)",
-            bank.format
-        ));
-    }
-
     let channels = sample.channels.max(1) as u16;
     let rate = if sample.frequency == 0 {
         48_000
@@ -255,10 +238,7 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
     };
 
     let samples = match bank.format {
-        SoundFormat::Pcm8 => data
-            .iter()
-            .map(|&b| (b as i8 as f32) / 128.0)
-            .collect(),
+        SoundFormat::Pcm8 => data.iter().map(|&b| (b as i8 as f32) / 128.0).collect(),
         SoundFormat::Pcm16 => data
             .chunks_exact(2)
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
@@ -272,7 +252,9 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
         other => {
-            return Err(format!("unsupported PCM variant {other:?}"));
+            return Err(format!(
+                "format {other} not supported for FSB load (PCM8/16/32/Float only; use bank.json for Vorbis)"
+            ));
         }
     };
 
