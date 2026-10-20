@@ -1,26 +1,31 @@
-# Restore full FSB5 parser
+# FSB5 parser restore
 
-## One command
+## Automatic (preferred)
+
+```bash
+cargo build -p ramod
+```
+
+`build.rs` detects the stub and restores the full parser from:
+
+1. `recovery/fsb.rs` (if present)
+2. GitHub raw URL at commit `d0e38a10`
+
+Then rewrites `src/fsb.rs`.
+
+## Manual
 
 ```bash
 git show d0e38a10e0ad438bbea79095292b3bbd0218c953:src/fsb.rs > src/fsb.rs
+# or
+curl -fsSL \
+  https://raw.githubusercontent.com/SimonTek27/RaMOD/d0e38a10e0ad438bbea79095292b3bbd0218c953/src/fsb.rs \
+  -o src/fsb.rs
 ```
-
-Or from this project's local recovery file (if you have the workspace artifacts):
-
-```bash
-cp artifacts/fsb.rs.RECOVERY src/fsb.rs
-```
-
-## Why
-
-Automated pushes briefly replaced `src/fsb.rs` with a placeholder. The full
-implementation (~35 KB: parse, sample_data, sample_to_wav, vorbis packets,
-tests) is still in git history at **d0e38a10**.
 
 ## Verify
 
 ```bash
 cargo test -p ramod --lib
-cargo run -p ramod -- list some.fsb
+cargo run -p ramod -- list path/to/bank.fsb
 ```
