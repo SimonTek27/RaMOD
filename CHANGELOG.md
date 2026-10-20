@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Studio stack (S1–S9)** — `ramod_runtime` (mixer, voices, events, 3D, cpal ring),
+  `ramod_editor` (egui Event Editor), `bevy_ramod`, `ramod_waveform` (GoldWave-style).
+- **Bank pipeline** — editor assign asset→event, `Build bank` → `bank.json` + assets +
+  optional **`Master.fsb`** (PCM16 via `Fsb5Builder`).
+- **bevy_ramod** — `LoadBank`, `load_bank_dir`, spatial emitters, volume → Intensity.
+- **Waveform** — import WAV/MP3/OGG/FLAC (Symphonia), DnD, selection, preview.
+- **FSB offline restore** — `recovery/fsb.z{0,1,2}` + `build.rs` (base64/zlib) before network.
+- Pure-Rust encoder/decoder feature path (`rusty_vorbis` / `lewton`).
+
+### Fixed
+
+- `src/fsb.rs` placeholder recovery path (do not ship stub without `cargo build`).
+
 ## [0.1.0] - 2026-10-15
 
 ### Added
@@ -19,12 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vorbis`** — Vorbis ↔ Ogg: the bundled 161-entry setup-header table, the Ogg
   muxer/demuxer, FSB → Ogg export (`build_ogg`) and Ogg → FSB import
   (`import_ogg`, `import_ogg_to_bank`).
-- **`vorbis_encode`** — PCM → Vorbis encoding through the stock
-  `libfsbvorbis64.dll` via raw FFI (`LoadLibraryW`/`GetProcAddress`), with a
-  graceful `EncoderUnavailable` fallback off Windows or when the DLL is absent.
+- **`vorbis_encode`** — PCM → Vorbis encoding path.
 - Spec-faithful layout: 32-byte-aligned sample data, name-table padding so the
   data section starts 32-byte aligned, and 32-byte padding of the data section.
-- Zero external crates: the crate depends only on the Rust standard library.
 
 [Unreleased]: https://github.com/SimonTek27/RaMOD/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/SimonTek27/RaMOD/releases/tag/v0.1.0

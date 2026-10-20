@@ -170,7 +170,13 @@ impl RamodEditorApp {
         let out = PathBuf::from("build");
         match self.project.export_bank_build(&bank, &out) {
             Ok(path) => {
-                self.status_msg = format!("Built bank → {}", path.display());
+                let fsb = out.join(&bank).join(format!("{bank}.fsb"));
+                let fsb_note = if fsb.exists() {
+                    format!(" + {}", fsb.display())
+                } else {
+                    " (FSB skipped — restore parser / add file assets)".into()
+                };
+                self.status_msg = format!("Built {}{}", path.display(), fsb_note);
             }
             Err(e) => self.status_msg = format!("Build failed: {e}"),
         }
