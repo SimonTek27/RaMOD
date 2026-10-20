@@ -1,8 +1,6 @@
-//! Load editor-built bank.json and play an event.
+//! Load editor-built bank.json via [`LoadBank`] and play an event.
 //!
 //! ```bash
-//! # 1) Build a bank from the editor (File → Build bank) → build/Master/bank.json
-//! # 2) Or use the sample under examples/sample_bank/
 //! cargo run -p bevy_ramod --example load_bank
 //! ```
 
@@ -23,7 +21,14 @@ fn main() {
         }))
         .add_plugins(RamodPlugin { open_device: true })
         .add_systems(Startup, setup)
+        .add_systems(Update, spawn_emitter_when_ready)
         .run();
+}
+
+#[derive(Resource)]
+struct BankReady {
+    event: String,
+    spawned: bool,
 }
 
 fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
@@ -33,42 +38,59 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
         Velocity::default(),
     ));
 
-    // Prefer editor Build output; fall back to sample_bank shipped with the example.
     let candidates = [
         PathBuf::from("build/Master/bank.json"),
         PathBuf::from("bevy_ramod/examples/sample_bank/bank.json"),
         PathBuf::from("examples/sample_bank/bank.json"),
     ];
 
-    let mut loaded = false;
-    for path in &candidates {
-        if path.exists() {
-            match audio.load_bank_dir(path) {
-                Ok(n) => {
-                    bevy::log::info!("Loaded {n} events from {}", path.display());
-                    loaded = true;
-                    break;
-                }
-                Err(e) => bevy::log::warn!("load {}: {e}", path.display()),
-            }
+    let mut path = None;
+    for p in &candidates {
+        if p.exists() {
+            path = Some(p.clone());
+            break;
         }
     }
 
-    if !loaded {
-        bevy::log::warn!("No bank.json found — registering demo tone");
+    if let Some(p) = path {
+        commands.spawn(LoadBank::new(p));
+        commands.insert_resource(BankReady {
+            event: String::new(), // filled next frame from registered_events
+            spawned: false,
+        });
+    } else {
         audio.register_demo_tone("event:/sfx/beep", 523.25);
+        commands.insert_resource(BankReady {
+            event: "event:/sfx/beep".into(),
+            spawned: false,
+        });
+    }
+}
+
+fn spawn_emitter_when_ready(
+    mut commands: Commands,
+    audio: Res<RamodAudio>,
+    mut ready: Option<ResMut<BankReady>>,
+) {
+    let Some(mut ready) = ready else {
+        return;
+    };
+    if ready.spawned {
+        return;
     }
 
-    let event = audio
-        .registered_events
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "event:/sfx/beep".into());
+    if ready.event.is_empty() {
+        if let Some(first) = audio.registered_events.first() {
+            ready.event = first.clone();
+        } else {
+            return; // wait for LoadBank system
+        }
+    }
 
     commands.spawn((
-        SpatialAudioBundle::new(event.clone(), Vec3::new(0.0, 0.0, -3.0)),
+        SpatialAudioBundle::new(ready.event.clone(), Vec3::new(0.0, 0.0, -3.0)),
         PlayOnSpawn,
     ));
-
-    bevy::log::info!("Playing {event}");
+    ready.spawned = true;
+    bevy::log::info!("Playing {}", ready.event);
 }

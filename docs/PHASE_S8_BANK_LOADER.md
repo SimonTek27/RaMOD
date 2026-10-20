@@ -1,30 +1,48 @@
-# S8 — bevy_ramod bank.json loader
+# S8 — bevy_ramod bank loader
 
 **Status:** on `main`
 
-## API
+## Ways to load a bank
+
+### 1. Component (preferred in ECS)
 
 ```rust
-// From editor Build output
-audio.load_bank_dir(Path::new("build/Master/bank.json"))?;
+commands.spawn(LoadBank::new("build/Master/bank.json"));
+```
 
-// Or from parsed asset
+Processed once on `Added<LoadBank>`, then the component is removed.
+
+### 2. Imperative API
+
+```rust
+audio.load_bank_dir(Path::new("build/Master/bank.json"))?;
+```
+
+### 3. Parsed asset
+
+```rust
 let bank = RamodBankAsset::from_json_path(path)?;
 audio.register_bank_asset(&bank)?;
 ```
 
-Events get PCM from `asset_file` (relative to `bank.json`), decoded via
-`ramod_waveform` (wav / mp3 / ogg / flac). If `asset_file` is missing, a short
-demo tone is registered so the event path still exists.
+## Emitter lifecycle
+
+| Component / field | Behaviour |
+|-------------------|-----------|
+| `PlayOnSpawn` | Starts event once, then removed |
+| `AudioEmitter.volume` | Written each frame as `Intensity` |
+| `AudioEmitter.is_3d` | Position/velocity synced from `GlobalTransform` |
 
 ## Pipeline
 
 ```
-Editor: import → assign → Build bank
-        ↓
-build/Master/bank.json + assets/*
-        ↓
-bevy_ramod: load_bank_dir → register_event → PlayOnSpawn
+Editor Build → build/Master/bank.json
+       ↓
+LoadBank / load_bank_dir
+       ↓
+register_event (PCM via ramod_waveform)
+       ↓
+SpatialAudioBundle + PlayOnSpawn
 ```
 
 ## Example
@@ -32,9 +50,3 @@ bevy_ramod: load_bank_dir → register_event → PlayOnSpawn
 ```bash
 cargo run -p bevy_ramod --example load_bank
 ```
-
-## AssetServer note
-
-`RamodBankLoader` registers the `.ramodbank.json` extension for Bevy’s asset
-pipeline. Day-to-day games should use `load_bank_dir` on the filesystem path
-produced by the editor (relative asset files are resolved correctly).

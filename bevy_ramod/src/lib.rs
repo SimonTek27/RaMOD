@@ -2,11 +2,14 @@
 //!
 //! Open-source alternative path to `bevy_fmod`, powered by pure-Rust `ramod_runtime`.
 //!
-//! ## Load a bank built by the editor
+//! ## Quick path
 //!
 //! ```ignore
-//! audio.load_bank_dir(Path::new("build/Master/bank.json")).unwrap();
-//! commands.spawn((SpatialAudioBundle::new("event:/sfx/beep", Vec3::ZERO), PlayOnSpawn));
+//! commands.spawn(LoadBank::new("build/Master/bank.json"));
+//! commands.spawn((
+//!     SpatialAudioBundle::new("event:/sfx/beep", Vec3::ZERO),
+//!     PlayOnSpawn,
+//! ));
 //! ```
 
 mod assets;
@@ -16,7 +19,7 @@ mod plugin;
 pub mod prelude {
     pub use crate::assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};
     pub use crate::components::{
-        AudioEmitter, AudioListener, PlayOnSpawn, SpatialAudioBundle, Velocity,
+        AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, SpatialAudioBundle, Velocity,
     };
     pub use crate::plugin::{RamodAudio, RamodPlugin};
     pub use ramod_runtime::{
@@ -26,6 +29,6 @@ pub mod prelude {
 
 pub use assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};
 pub use components::{
-    AudioEmitter, AudioListener, PlayOnSpawn, SpatialAudioBundle, Velocity,
+    AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, SpatialAudioBundle, Velocity,
 };
 pub use plugin::{RamodAudio, RamodPlugin};

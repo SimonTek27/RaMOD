@@ -1,5 +1,7 @@
 //! ECS components (S8.2) — patterned after bevy_fmod.
 
+use std::path::PathBuf;
+
 use bevy::prelude::*;
 use ramod_runtime::Attenuation;
 
@@ -21,6 +23,7 @@ pub struct AudioEmitter {
     pub auto_play: bool,
     pub is_3d: bool,
     pub attenuation: Attenuation,
+    /// Linear gain 0…1+ applied as Intensity / voice gain.
     pub volume: f32,
 }
 
@@ -41,11 +44,32 @@ impl AudioEmitter {
         e.is_3d = false;
         e
     }
+
+    pub fn with_volume(mut self, volume: f32) -> Self {
+        self.volume = volume;
+        self
+    }
 }
 
 /// Play the emitter once on spawn (consumed after start).
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct PlayOnSpawn;
+
+/// Load a bank.json from disk on spawn, then remove this component.
+///
+/// ```ignore
+/// commands.spawn(LoadBank::new("build/Master/bank.json"));
+/// ```
+#[derive(Component, Debug, Clone)]
+pub struct LoadBank {
+    pub path: PathBuf,
+}
+
+impl LoadBank {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
 
 /// Convenience bundle for a 3D emitter.
 #[derive(Bundle, Clone)]

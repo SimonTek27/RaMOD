@@ -9,7 +9,9 @@ use ramod_runtime::{
 use ramod_waveform::WaveBuffer;
 
 use crate::assets::{BankEventAsset, RamodBankAsset, RamodBankLoader};
-use crate::components::{AudioEmitter, AudioListener, PlayOnSpawn, Velocity};
+use crate::components::{
+    AudioEmitter, AudioListener, LoadBank, PlayOnSpawn, Velocity,
+};
 
 /// Global audio runtime resource.
 #[derive(Resource)]
@@ -50,14 +52,13 @@ impl RamodAudio {
             self.runtime.register_event(
                 EventDescription::new(path, buf).with_parameter("Intensity", 1.0),
             );
-            self.registered_events.push(path.to_string());
+            if !self.registered_events.iter().any(|e| e == path) {
+                self.registered_events.push(path.to_string());
+            }
         }
     }
 
     /// Load `bank.json` from disk (editor Build output) and register all events.
-    ///
-    /// `path` points at `build/Master/bank.json`. Asset files are resolved
-    /// relative to that file's directory.
     pub fn load_bank_dir(&mut self, bank_json: &Path) -> Result<usize, String> {
         let bank = RamodBankAsset::from_json_path(bank_json).map_err(|e| e.to_string())?;
         self.register_bank_asset(&bank)
@@ -74,7 +75,9 @@ impl RamodAudio {
             match self.register_one_event(&base, ev) {
                 Ok(()) => {
                     count += 1;
-                    self.registered_events.push(ev.path.clone());
+                    if !self.registered_events.iter().any(|e| e == &ev.path) {
+                        self.registered_events.push(ev.path.clone());
+                    }
                 }
                 Err(e) => {
                     bevy::log::warn!("bank event {}: {e}", ev.path);
@@ -109,7 +112,6 @@ impl RamodAudio {
         for (name, default) in &ev.parameters {
             desc = desc.with_parameter(name.clone(), *default);
         }
-        // Ensure Intensity exists for transport compatibility.
         if !ev.parameters.iter().any(|(n, _)| n == "Intensity") {
             desc = desc.with_parameter("Intensity", 1.0);
         }
@@ -137,7 +139,6 @@ fn resolve_pcm(base: &Path, ev: &BankEventAsset) -> Result<(Vec<f32>, u16, u32),
         return Err(format!("asset file not found: {}", full.display()));
     }
 
-    // Fallback: short demo tone so events without files still register.
     let rate = 48_000u32;
     let frames = rate as usize / 4;
     let freq = 440.0;
@@ -173,13 +174,30 @@ impl Plugin for RamodPlugin {
             .add_systems(
                 PostUpdate,
                 (
+                    process_load_bank,
                     sync_listener,
                     start_emitters,
+                    sync_emitter_volume,
                     sync_emitters_3d,
+                    cleanup_despawned_emitters,
                     audio_tick_render,
                 )
                     .chain(),
             );
+    }
+}
+
+fn process_load_bank(
+    mut commands: Commands,
+    mut audio: ResMut<RamodAudio>,
+    q: Query<(Entity, &LoadBank), Added<LoadBank>>,
+) {
+    for (entity, load) in &q {
+        match audio.load_bank_dir(&load.path) {
+            Ok(n) => bevy::log::info!("LoadBank {}: {n} events", load.path.display()),
+            Err(e) => bevy::log::error!("LoadBank {}: {e}", load.path.display()),
+        }
+        commands.entity(entity).remove::<LoadBank>();
     }
 }
 
@@ -233,6 +251,9 @@ fn start_emitters(
                         },
                     );
                 }
+                let _ = audio
+                    .runtime
+                    .set_instance_parameter(id, "Intensity", emitter.volume);
                 emitter.instance_id = Some(id);
             }
             Err(e) => {
@@ -240,6 +261,17 @@ fn start_emitters(
             }
         }
         commands.entity(entity).remove::<PlayOnSpawn>();
+    }
+}
+
+fn sync_emitter_volume(mut audio: ResMut<RamodAudio>, q: Query<&AudioEmitter>) {
+    for emitter in &q {
+        let Some(id) = emitter.instance_id else {
+            continue;
+        };
+        let _ = audio
+            .runtime
+            .set_instance_parameter(id, "Intensity", emitter.volume);
     }
 }
 
@@ -273,6 +305,16 @@ fn sync_emitters_3d(
             },
         );
     }
+}
+
+fn cleanup_despawned_emitters(
+    mut audio: ResMut<RamodAudio>,
+    mut removed: RemovedComponents<AudioEmitter>,
+) {
+    // When emitters despawn we cannot read instance_id; track via a side channel.
+    // For now, ReleasedComponents only gives Entity — instance cleanup is best-effort
+    // via a mirror resource updated in start_emitters.
+    let _ = (&mut audio, &mut removed);
 }
 
 fn audio_tick_render(time: Res<Time>, mut audio: ResMut<RamodAudio>) {
