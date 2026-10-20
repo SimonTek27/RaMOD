@@ -175,7 +175,7 @@ impl Project {
         Ok(())
     }
 
-    /// Build a bank folder: `out_dir/<bank>/bank.json` + copied assets.
+    /// Build a bank folder: `out_dir/<bank>/bank.json` + assets + optional `.fsb`.
     pub fn export_bank_build(&self, bank_name: &str, out_dir: &Path) -> Result<PathBuf, String> {
         let bank_dir = out_dir.join(bank_name);
         let assets_dir = bank_dir.join("assets");
@@ -231,6 +231,69 @@ impl Project {
         let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
         let manifest_path = bank_dir.join("bank.json");
         std::fs::write(&manifest_path, json).map_err(|e| e.to_string())?;
+
+        // Binary FSB5 (PCM16) — needs full fsb parser (cargo build -p ramod restores it)
+        let _ = self.export_fsb_bank(bank_name, &bank_dir.join(format!("{bank_name}.fsb")));
+
         Ok(manifest_path)
     }
+
+    /// Write an FSB5 PCM16 bank from project assets linked to this bank's events.
+    pub fn export_fsb_bank(&self, bank_name: &str, out_path: &Path) -> Result<usize, String> {
+        use ramod::{Fsb5Builder, PcmSample, SoundFormat};
+        use ramod_waveform::WaveBuffer;
+
+        let mut builder = Fsb5Builder::new(SoundFormat::Pcm16);
+        let mut count = 0usize;
+
+        for ev in self.events.iter().filter(|e| e.bank == bank_name) {
+            let Some(ai) = ev.asset_index else {
+                continue;
+            };
+            let Some(asset) = self.assets.get(ai) else {
+                continue;
+            };
+            let Some(ref sp) = asset.source_path else {
+                continue;
+            };
+            let path = Path::new(sp);
+            if !path.exists() {
+                continue;
+            }
+            let wave = WaveBuffer::from_file(path).map_err(|e| e.to_string())?;
+            let pcm_i16 = f32_to_pcm16(&wave.samples);
+            let mut sample = PcmSample::new(
+                asset.name.clone(),
+                wave.sample_rate,
+                wave.channels as u32,
+                pcm_i16,
+            );
+            if ev.looping {
+                let frames = wave.frames() as u32;
+                sample = sample.with_loop(0, frames.saturating_sub(1));
+            }
+            builder.push(sample);
+            count += 1;
+        }
+
+        if count == 0 {
+            return Err("no file-backed assets to put in FSB".into());
+        }
+
+        let bytes = builder.build().map_err(|e| format!("FSB build: {e}"))?;
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(out_path, bytes).map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+}
+
+fn f32_to_pcm16(samples: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(samples.len() * 2);
+    for &s in samples {
+        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
 }
