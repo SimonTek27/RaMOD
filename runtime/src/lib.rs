@@ -107,6 +107,7 @@ pub struct Runtime {
     scheduled: Vec<ScheduledVoice>,
     designed_playbacks: Vec<DesignedPlayback>,
     recent_markers: Vec<String>,
+    pending_transition: Option<(u64, String)>,
     profiler: crate::profiler::ProfilerSession,
     spectrum: crate::profiler::SpectrumAnalyzer,
     last_render_us: u32,
@@ -141,6 +142,7 @@ impl Runtime {
             scheduled: Vec::new(),
             designed_playbacks: Vec::new(),
             recent_markers: Vec::new(),
+            pending_transition: None,
             profiler: crate::profiler::ProfilerSession::new(600),
             spectrum: crate::profiler::SpectrumAnalyzer::new(16),
             last_render_us: 0,
@@ -268,10 +270,21 @@ impl Runtime {
                             if self.recent_markers.len() > 32 {
                                 self.recent_markers.remove(0);
                             }
+                            if let Some(ref target) = m.target_event {
+                                if !target.is_empty() {
+                                    self.pending_transition = Some((iid, target.clone()));
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if let Some((stop_id, next_path)) = self.pending_transition.take() {
+            self.stop_instance(stop_id);
+            self.events.release_instance(stop_id);
+            let _ = self.play_event(&next_path);
         }
 
         self.voices.advance_envelopes(dt);
