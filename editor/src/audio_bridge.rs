@@ -247,6 +247,22 @@ impl AudioBridge {
             avg_cpu_us: self.rt.profiler_session().avg_cpu_us(),
             peak_voices: self.rt.profiler_session().peak_voices(),
             bus_meters: self.rt.list_bus_meters(),
+            cpu_history: {
+                let sess = self.rt.profiler_session();
+                let n = sess.len().min(120);
+                sess.frames[sess.len().saturating_sub(n)..]
+                    .iter()
+                    .map(|f| f.cpu_render_us)
+                    .collect()
+            },
+            voice_history: {
+                let sess = self.rt.profiler_session();
+                let n = sess.len().min(120);
+                sess.frames[sess.len().saturating_sub(n)..]
+                    .iter()
+                    .map(|f| f.active_voices as u32)
+                    .collect()
+            },
         }
     }
 
@@ -300,6 +316,8 @@ pub struct ProfilerSnapshot {
     pub avg_cpu_us: f32,
     pub peak_voices: usize,
     pub bus_meters: Vec<BusMeterInfo>,
+    pub cpu_history: Vec<u32>,
+    pub voice_history: Vec<u32>,
 }
 
 struct ResolvedPcm {

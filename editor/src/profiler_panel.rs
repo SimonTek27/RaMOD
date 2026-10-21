@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses).
+//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, timelines).
 
 use eframe::egui;
 
@@ -21,7 +21,6 @@ pub enum ProfilerAction {
     ExportNdjson,
     ToggleMute(u32),
     ToggleSolo(u32),
-    /// (bus_id, volume_db)
     SetVolume(u32, f32),
 }
 
@@ -75,6 +74,12 @@ impl ProfilerPanel {
                 );
             }
         });
+
+        ui.separator();
+        ui.label("CPU timeline (µs)");
+        draw_sparkline(ui, &snap.cpu_history, egui::Color32::from_rgb(100, 180, 255), 48.0);
+        ui.label("Voices timeline");
+        draw_sparkline(ui, &snap.voice_history, egui::Color32::from_rgb(120, 200, 120), 36.0);
 
         ui.separator();
         ui.label("Playing events");
@@ -195,4 +200,34 @@ fn kpi(ui: &mut egui::Ui, label: &str, value: String) {
         ui.strong(value);
     });
     ui.add_space(12.0);
+}
+
+fn draw_sparkline(ui: &mut egui::Ui, data: &[u32], color: egui::Color32, height: f32) {
+    if data.is_empty() {
+        ui.weak("(no samples — press Play)");
+        return;
+    }
+    let w = ui.available_width().max(80.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(25, 25, 28));
+    let max_v = data.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let n = data.len().max(1) as f32;
+    let mut points = Vec::with_capacity(data.len());
+    for (i, &v) in data.iter().enumerate() {
+        let x = rect.left() + (i as f32 / (n - 1.0).max(1.0)) * rect.width();
+        let y = rect.bottom() - (v as f32 / max_v) * (height - 4.0) - 2.0;
+        points.push(egui::pos2(x, y));
+    }
+    if points.len() >= 2 {
+        painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
+    }
+    let last = *data.last().unwrap_or(&0);
+    painter.text(
+        rect.right_top() + egui::vec2(-4.0, 2.0),
+        egui::Align2::RIGHT_TOP,
+        format!("{last} (max {max_v:.0})"),
+        egui::FontId::monospace(10.0),
+        egui::Color32::GRAY,
+    );
 }
