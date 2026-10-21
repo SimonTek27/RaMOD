@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, buses, FX params, snapshots, 3D map).
+//! S7 — Editor Profiler (CPU, buses, FX, snapshots, 3D map + Doppler).
 
 use eframe::egui;
 
@@ -30,8 +30,8 @@ pub enum ProfilerAction {
     SaveSnapshot,
     TriggerSnapshot { name: String, weight: f32 },
     ClearSnapshot,
-    SetEmitterPos { x: f32, z: f32 },
-    SetListenerPos { x: f32, z: f32 },
+    SetEmitterPos { x: f32, z: f32, vx: f32, vz: f32 },
+    SetListenerPos { x: f32, z: f32, vx: f32, vz: f32 },
     AddLowPass(u32),
     AddHighPass(u32),
     AddCompressor(u32),
@@ -376,7 +376,7 @@ impl ProfilerPanel {
 
         ui.separator();
         ui.label("3D emitters (XZ top-down)");
-        ui.weak("Drag orange = emitter · green L = listener · scale ±50m");
+        ui.weak("Drag = move + Doppler · release zeros velocity · scale ±50m");
         if let Some(a) = draw_emitter_map(ui, snap) {
             action = a;
         }
@@ -385,8 +385,13 @@ impl ProfilerPanel {
         } else {
             for (i, e) in snap.emitters.iter().enumerate() {
                 ui.weak(format!(
-                    "  #{i}  ({:.1}, {:.1}, {:.1})  aud {:.2}",
-                    e.position.x, e.position.y, e.position.z, e.audibility
+                    "  #{i}  ({:.1},{:.1},{:.1})  v({:.1},{:.1})  aud {:.2}",
+                    e.position.x,
+                    e.position.y,
+                    e.position.z,
+                    e.velocity.x,
+                    e.velocity.z,
+                    e.audibility
                 ));
             }
         }
@@ -509,6 +514,9 @@ fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> Option<Profil
     }
 
     let mut action = None;
+    let d = response.drag_delta();
+    let vx = (d.x / scale) * 12.0;
+    let vz = (-d.y / scale) * 12.0;
     if response.dragged() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let (wx, wz) = to_world(pointer);
@@ -520,20 +528,64 @@ fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> Option<Profil
             }
             const HIT: f32 = 16.0;
             if nearest_emitter_d < HIT && nearest_emitter_d <= dist_l {
-                action = Some(ProfilerAction::SetEmitterPos { x: wx, z: wz });
+                action = Some(ProfilerAction::SetEmitterPos {
+                    x: wx,
+                    z: wz,
+                    vx,
+                    vz,
+                });
             } else if dist_l < HIT {
-                action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+                action = Some(ProfilerAction::SetListenerPos {
+                    x: wx,
+                    z: wz,
+                    vx,
+                    vz,
+                });
             } else if !snap.emitters.is_empty() {
-                action = Some(ProfilerAction::SetEmitterPos { x: wx, z: wz });
+                action = Some(ProfilerAction::SetEmitterPos {
+                    x: wx,
+                    z: wz,
+                    vx,
+                    vz,
+                });
             } else {
-                action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+                action = Some(ProfilerAction::SetListenerPos {
+                    x: wx,
+                    z: wz,
+                    vx,
+                    vz,
+                });
             }
+        }
+    } else if response.drag_stopped() {
+        if !snap.emitters.is_empty() {
+            let e = &snap.emitters[0];
+            action = Some(ProfilerAction::SetEmitterPos {
+                x: e.position.x,
+                z: e.position.z,
+                vx: 0.0,
+                vz: 0.0,
+            });
+        }
+        let (lx, _, lz) = snap.listener;
+        if snap.emitters.is_empty() {
+            action = Some(ProfilerAction::SetListenerPos {
+                x: lx,
+                z: lz,
+                vx: 0.0,
+                vz: 0.0,
+            });
         }
     }
     if response.double_clicked() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let (wx, wz) = to_world(pointer);
-            action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+            action = Some(ProfilerAction::SetListenerPos {
+                x: wx,
+                z: wz,
+                vx: 0.0,
+                vz: 0.0,
+            });
         }
     }
     action
