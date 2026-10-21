@@ -18,6 +18,7 @@ impl Default for ProfilerPanel {
 pub enum ProfilerAction {
     None,
     Clear,
+    ExportNdjson,
 }
 
 impl ProfilerPanel {
@@ -29,6 +30,9 @@ impl ProfilerPanel {
             ui.separator();
             if ui.button("Clear").clicked() {
                 action = ProfilerAction::Clear;
+            }
+            if ui.button("Export NDJSON").clicked() {
+                action = ProfilerAction::ExportNdjson;
             }
             ui.weak(format!("{} frames", snap.session_frames));
         });
