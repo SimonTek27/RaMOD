@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, DesignedEvent, EventDescription, InstrumentDef, PlayParams, Runtime,
-    RuntimeConfig, TimelineTrack,
+    Attenuation, AutomationCurve, DesignedEvent, EventDescription, InstrumentDef, PlayParams,
+    Runtime, RuntimeConfig, TimelineTrack,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -48,9 +48,8 @@ impl AudioBridge {
     pub fn sync_project(&mut self, project: &Project) {
         self.stop();
         self.registered.clear();
-        let open = true;
         if let Ok(rt) = Runtime::new(RuntimeConfig {
-            open_device: open,
+            open_device: true,
             sample_rate: 48_000,
             channels: 2,
             max_voices: 32,
@@ -74,6 +73,13 @@ impl AudioBridge {
                 designed.is_3d = ev.is_3d;
                 designed.length = ev.length;
                 designed.parameters = ev.parameters.clone();
+                for a in &ev.automation {
+                    let mut curve = AutomationCurve::new(&a.parameter);
+                    for &(t, v) in &a.keys {
+                        curve.add_key(t, v);
+                    }
+                    designed.automation.push(curve);
+                }
                 if ev.is_3d {
                     designed.attenuation = Attenuation {
                         min_distance: ev.min_distance,
@@ -164,6 +170,7 @@ impl AudioBridge {
         if let Some(v) = self.preview_voice.take() {
             self.rt.stop(v);
         }
+        self.rt.clear_scheduled();
     }
 
     pub fn set_parameter(&mut self, name: &str, value: f32) {
