@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, EventDescription, PlayParams, Runtime, RuntimeConfig,
+    Attenuation, DesignedEvent, EventDescription, InstrumentDef, PlayParams, Runtime,
+    RuntimeConfig, TimelineTrack,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -13,13 +14,11 @@ pub struct AudioBridge {
     rt: Runtime,
     registered: Vec<String>,
     playing_id: Option<u64>,
-    /// Voice-style play from waveform (buffer handle path).
     preview_voice: Option<ramod_runtime::VoiceHandle>,
 }
 
 impl AudioBridge {
     pub fn new() -> Result<Self, String> {
-        // Prefer real device; fall back to headless.
         let rt = match Runtime::new(RuntimeConfig {
             open_device: true,
             sample_rate: 48_000,
@@ -68,6 +67,49 @@ impl AudioBridge {
         }
 
         for ev in &project.events {
+            if !ev.tracks.is_empty() {
+                let mut buffers = Vec::new();
+                let mut designed = DesignedEvent::new(&ev.path);
+                designed.priority = ev.priority;
+                designed.is_3d = ev.is_3d;
+                designed.length = ev.length;
+                designed.parameters = ev.parameters.clone();
+                if ev.is_3d {
+                    designed.attenuation = Attenuation {
+                        min_distance: ev.min_distance,
+                        max_distance: ev.max_distance,
+                    };
+                }
+                for tr in &ev.tracks {
+                    let mut track = TimelineTrack::new(&tr.name);
+                    track.mute = tr.mute;
+                    track.solo = tr.solo;
+                    for inst in &tr.instruments {
+                        let pcm = resolve_instrument_pcm(project, inst.asset_index, ev);
+                        let Ok(buf) =
+                            self.rt.load_pcm(pcm.samples, pcm.channels, pcm.sample_rate)
+                        else {
+                            continue;
+                        };
+                        let slot = buffers.len();
+                        buffers.push(buf);
+                        let mut idef = InstrumentDef::single(&inst.name, slot);
+                        idef.start_time = inst.start_time;
+                        idef.length = inst.length;
+                        idef.probability = inst.probability;
+                        idef.looping = inst.looping;
+                        track.instruments.push(idef);
+                    }
+                    designed.tracks.push(track);
+                }
+                if !buffers.is_empty() {
+                    if self.rt.register_designed_event(designed, &buffers).is_ok() {
+                        self.registered.push(ev.path.clone());
+                    }
+                    continue;
+                }
+            }
+
             let pcm = resolve_asset_pcm(project, ev);
             let Ok(buf) = self.rt.load_pcm(pcm.samples, pcm.channels, pcm.sample_rate) else {
                 continue;
@@ -96,7 +138,6 @@ impl AudioBridge {
         Ok(())
     }
 
-    /// Preview arbitrary PCM (waveform panel).
     pub fn play_pcm(
         &mut self,
         samples: Vec<f32>,
@@ -139,7 +180,6 @@ impl AudioBridge {
         let frames = ((dt * self.rt.sample_rate() as f32).max(1.0) as usize).min(4096);
         let mut out = vec![0.0f32; frames * self.rt.channels() as usize];
         self.rt.render(&mut out);
-        // With open_device, cpal callback may also pull; render keeps state advancing.
         let _ = out;
         if self.preview_voice.is_some() && self.rt.active_voices() == 0 {
             self.preview_voice = None;
@@ -160,7 +200,6 @@ struct ResolvedPcm {
 fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
     let asset: Option<&AssetEntry> = ev.asset_index.and_then(|i| project.assets.get(i));
 
-    // Prefer file on disk (wav/mp3/ogg/flac).
     if let Some(AssetEntry {
         source_path: Some(path),
         ..
@@ -175,7 +214,6 @@ fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
         }
     }
 
-    // Demo tone fallback
     let freq = asset.and_then(|a| a.demo_freq_hz).unwrap_or(440.0);
     let rate = 48_000u32;
     let frames = rate as usize / 2;
@@ -190,4 +228,17 @@ fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
         channels: 1,
         sample_rate: rate,
     }
+}
+
+fn resolve_instrument_pcm(
+    project: &Project,
+    asset_index: Option<usize>,
+    fallback_ev: &EventEntry,
+) -> ResolvedPcm {
+    if let Some(ai) = asset_index {
+        let mut pseudo = fallback_ev.clone();
+        pseudo.asset_index = Some(ai);
+        return resolve_asset_pcm(project, &pseudo);
+    }
+    resolve_asset_pcm(project, fallback_ev)
 }
