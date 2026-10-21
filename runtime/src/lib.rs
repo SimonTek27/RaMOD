@@ -88,6 +88,7 @@ struct DesignedPlayback {
     path: String,
     elapsed: f32,
     voices: Vec<VoiceHandle>,
+    markers_fired: Vec<String>,
 }
 
 pub struct Runtime {
@@ -105,6 +106,7 @@ pub struct Runtime {
     designed_buffers: std::collections::HashMap<String, Vec<BufferHandle>>,
     scheduled: Vec<ScheduledVoice>,
     designed_playbacks: Vec<DesignedPlayback>,
+    recent_markers: Vec<String>,
     profiler: crate::profiler::ProfilerSession,
     spectrum: crate::profiler::SpectrumAnalyzer,
     last_render_us: u32,
@@ -138,6 +140,7 @@ impl Runtime {
             designed_buffers: std::collections::HashMap::new(),
             scheduled: Vec::new(),
             designed_playbacks: Vec::new(),
+            recent_markers: Vec::new(),
             profiler: crate::profiler::ProfilerSession::new(600),
             spectrum: crate::profiler::SpectrumAnalyzer::new(16),
             last_render_us: 0,
@@ -201,17 +204,11 @@ impl Runtime {
         Ok(handle)
     }
 
-    pub fn stop(&mut self, voice: VoiceHandle) {
-        self.voices.stop(voice);
-    }
-
+    pub fn stop(&mut self, voice: VoiceHandle) { self.voices.stop(voice); }
     pub fn set_voice_gain(&mut self, voice: VoiceHandle, gain: f32) {
         self.voices.set_gain(voice, gain.max(0.0));
     }
-
-    pub fn active_voices(&self) -> usize {
-        self.voices.active_count()
-    }
+    pub fn active_voices(&self) -> usize { self.voices.active_count() }
 
     pub fn tick(&mut self, dt: f32) {
         let mut still = Vec::new();
@@ -253,10 +250,25 @@ impl Runtime {
             })
             .collect();
         for (iid, path, elapsed) in paths {
-            if let Some(ev) = self.designed.iter().find(|e| e.path == path) {
+            if let Some(ev) = self.designed.iter().find(|e| e.path == path).cloned() {
                 for curve in &ev.automation {
                     if let Some(v) = curve.eval(elapsed) {
                         let _ = self.set_instance_parameter(iid, &curve.parameter, v);
+                    }
+                }
+                if let Some(pb) = self
+                    .designed_playbacks
+                    .iter_mut()
+                    .find(|p| p.instance_id == iid)
+                {
+                    for m in &ev.markers {
+                        if elapsed >= m.time && !pb.markers_fired.iter().any(|n| n == &m.name) {
+                            pb.markers_fired.push(m.name.clone());
+                            self.recent_markers.push(m.name.clone());
+                            if self.recent_markers.len() > 32 {
+                                self.recent_markers.remove(0);
+                            }
+                        }
                     }
                 }
             }
@@ -371,9 +383,7 @@ impl Runtime {
             .ok_or(RuntimeError::InvalidBuffer)?;
         let mut desc = EventDescription::new(&event.path, primary)
             .with_priority(event.priority)
-            .with_loop(
-                event.tracks.iter().flat_map(|t| t.instruments.iter()).any(|i| i.looping),
-            );
+            .with_loop(event.tracks.iter().flat_map(|t| t.instruments.iter()).any(|i| i.looping));
         if event.is_3d {
             desc = desc.with_3d(event.attenuation);
         }
@@ -441,10 +451,7 @@ impl Runtime {
         Ok(handles)
     }
 
-    pub fn play_designed_registered(
-        &mut self,
-        path: &str,
-    ) -> Result<Vec<VoiceHandle>, RuntimeError> {
+    pub fn play_designed_registered(&mut self, path: &str) -> Result<Vec<VoiceHandle>, RuntimeError> {
         let buffers = self
             .designed_buffers
             .get(path)
@@ -454,7 +461,6 @@ impl Runtime {
     }
 
     pub fn designed_events(&self) -> &[DesignedEvent] { &self.designed }
-
     pub fn export_bank_manifest(&self, name: &str) -> BankManifest {
         BankManifest::from_events(name, &self.designed)
     }
@@ -505,6 +511,7 @@ impl Runtime {
                 path: path.to_string(),
                 elapsed: 0.0,
                 voices: std::mem::take(&mut handles),
+                markers_fired: Vec::new(),
             });
             self.events.instances_reinsert(inst);
             return Ok(id);
@@ -529,8 +536,19 @@ impl Runtime {
         self.scheduled.retain(|s| s.instance_id != Some(id));
     }
 
-    pub fn clear_scheduled(&mut self) {
-        self.scheduled.clear();
+    pub fn clear_scheduled(&mut self) { self.scheduled.clear(); }
+
+    pub fn master_levels(&self) -> (f32, f32) {
+        let id = self.mixer.master_id();
+        self.bus_meter(id).map(|m| (m.peak, m.rms)).unwrap_or((0.0, 0.0))
+    }
+
+    pub fn last_fired_markers(&self) -> Vec<String> {
+        self.recent_markers.clone()
+    }
+
+    pub fn clear_fired_markers(&mut self) {
+        self.recent_markers.clear();
     }
 
     pub fn release_instance(&mut self, id: u64) {
