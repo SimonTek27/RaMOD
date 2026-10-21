@@ -1,4 +1,4 @@
-//! S3.1 — Project model: events, banks, assets. Save/load JSON + bank build.
+//! S3.1 / S5 — Project model: events, banks, assets, multi-track timeline.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -30,6 +30,12 @@ pub struct EventEntry {
     pub max_distance: f32,
     #[serde(default)]
     pub parameters: Vec<(String, f32)>,
+    /// S5 multi-track timeline (empty = single-asset legacy event).
+    #[serde(default)]
+    pub tracks: Vec<TrackEntry>,
+    /// Timeline length in seconds (UI).
+    #[serde(default = "default_event_len")]
+    pub length: f32,
 }
 
 fn default_priority() -> i32 {
@@ -41,6 +47,9 @@ fn default_min_dist() -> f32 {
 fn default_max_dist() -> f32 {
     50.0
 }
+fn default_event_len() -> f32 {
+    4.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BankEntry {
@@ -50,13 +59,67 @@ pub struct BankEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
     pub name: String,
-    /// Path to audio file on disk (wav/mp3/ogg/flac).
     pub source_path: Option<String>,
-    /// Synthetic tone (Hz) when no file.
     pub demo_freq_hz: Option<f32>,
 }
 
-/// Built bank product (JSON) for runtime / bevy_ramod load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstrumentEntry {
+    pub name: String,
+    #[serde(default)]
+    pub asset_index: Option<usize>,
+    #[serde(default)]
+    pub start_time: f32,
+    #[serde(default = "default_inst_len")]
+    pub length: f32,
+    #[serde(default = "default_prob")]
+    pub probability: f32,
+    #[serde(default)]
+    pub looping: bool,
+}
+
+fn default_inst_len() -> f32 {
+    2.0
+}
+fn default_prob() -> f32 {
+    1.0
+}
+
+impl InstrumentEntry {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            asset_index: None,
+            start_time: 0.0,
+            length: 2.0,
+            probability: 1.0,
+            looping: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackEntry {
+    pub name: String,
+    #[serde(default)]
+    pub instruments: Vec<InstrumentEntry>,
+    #[serde(default)]
+    pub mute: bool,
+    #[serde(default)]
+    pub solo: bool,
+}
+
+impl TrackEntry {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            instruments: Vec::new(),
+            mute: false,
+            solo: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BankBuildManifest {
     pub name: String,
@@ -75,6 +138,10 @@ pub struct BankBuildEvent {
     pub min_distance: f32,
     pub max_distance: f32,
     pub parameters: Vec<(String, f32)>,
+    #[serde(default)]
+    pub tracks: Vec<TrackEntry>,
+    #[serde(default)]
+    pub length: f32,
 }
 
 impl Default for Project {
@@ -91,6 +158,20 @@ impl Default for Project {
                 min_distance: 1.0,
                 max_distance: 50.0,
                 parameters: vec![("Intensity".into(), 1.0)],
+                tracks: vec![TrackEntry {
+                    name: "Audio 1".into(),
+                    instruments: vec![InstrumentEntry {
+                        name: "beep".into(),
+                        asset_index: Some(0),
+                        start_time: 0.0,
+                        length: 0.5,
+                        probability: 1.0,
+                        looping: false,
+                    }],
+                    mute: false,
+                    solo: false,
+                }],
+                length: 4.0,
             }],
             banks: vec![BankEntry {
                 name: "Master".into(),
@@ -133,7 +214,39 @@ impl Project {
             min_distance: 1.0,
             max_distance: 50.0,
             parameters: vec![("Intensity".into(), 1.0)],
+            tracks: vec![TrackEntry::new("Audio 1")],
+            length: 4.0,
         });
+    }
+
+    pub fn add_track(&mut self, event_index: usize, name: impl Into<String>) -> Result<(), String> {
+        let ev = self
+            .events
+            .get_mut(event_index)
+            .ok_or_else(|| "event index out of range".to_string())?;
+        ev.tracks.push(TrackEntry::new(name));
+        Ok(())
+    }
+
+    pub fn add_instrument(
+        &mut self,
+        event_index: usize,
+        track_index: usize,
+        name: impl Into<String>,
+        asset_index: Option<usize>,
+    ) -> Result<(), String> {
+        let ev = self
+            .events
+            .get_mut(event_index)
+            .ok_or_else(|| "event index out of range".to_string())?;
+        let track = ev
+            .tracks
+            .get_mut(track_index)
+            .ok_or_else(|| "track index out of range".to_string())?;
+        let mut inst = InstrumentEntry::new(name);
+        inst.asset_index = asset_index;
+        track.instruments.push(inst);
+        Ok(())
     }
 
     pub fn add_asset_demo(&mut self, name: String, freq: f32) {
@@ -144,7 +257,6 @@ impl Project {
         });
     }
 
-    /// Register a file-backed asset. Returns index.
     pub fn add_asset_file(&mut self, path: &Path) -> usize {
         let name = path
             .file_stem()
@@ -159,7 +271,6 @@ impl Project {
         self.assets.len() - 1
     }
 
-    /// Link asset index to event index.
     pub fn assign_asset_to_event(
         &mut self,
         event_index: usize,
@@ -175,7 +286,6 @@ impl Project {
         Ok(())
     }
 
-    /// Build a bank folder: `out_dir/<bank>/bank.json` + assets + optional `.fsb`.
     pub fn export_bank_build(&self, bank_name: &str, out_dir: &Path) -> Result<PathBuf, String> {
         let bank_dir = out_dir.join(bank_name);
         let assets_dir = bank_dir.join("assets");
@@ -220,6 +330,8 @@ impl Project {
                 min_distance: ev.min_distance,
                 max_distance: ev.max_distance,
                 parameters: ev.parameters.clone(),
+                tracks: ev.tracks.clone(),
+                length: ev.length,
             });
         }
 
@@ -232,13 +344,11 @@ impl Project {
         let manifest_path = bank_dir.join("bank.json");
         std::fs::write(&manifest_path, json).map_err(|e| e.to_string())?;
 
-        // Binary FSB5 (PCM16) — needs full fsb parser (cargo build -p ramod restores it)
         let _ = self.export_fsb_bank(bank_name, &bank_dir.join(format!("{bank_name}.fsb")));
 
         Ok(manifest_path)
     }
 
-    /// Write an FSB5 PCM16 bank from project assets linked to this bank's events.
     pub fn export_fsb_bank(&self, bank_name: &str, out_path: &Path) -> Result<usize, String> {
         use ramod::{Fsb5Builder, PcmSample, SoundFormat};
         use ramod_waveform::WaveBuffer;
