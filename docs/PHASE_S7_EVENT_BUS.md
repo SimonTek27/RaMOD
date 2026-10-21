@@ -1,22 +1,25 @@
 # S7.6 — Event → mixer bus routing
 
-**Status:** on `main`
+**Status:** on `main` (model + UI + API; per-voice accumulate still shared buffer)
 
-## Model
+## Editor
 
-`EventEntry.output_bus: String` — default `"SFX"`.
+Event Editor → **Bus** combo: `SFX` | `Music` | `Master`.
 
-Choices in Event Editor: **SFX** | **Music** | **Master**.
+Stored as `EventEntry.output_bus` (default `SFX`).
 
 ## Runtime
 
+- `DesignedEvent.output_bus` / `EventDescription.output_bus`
 - `Mixer::find_by_name`
-- `DesignedEvent.output_bus` / `EventDescription.with_output_bus`
-- On `play_event`, voices route to that bus (`current_output_bus`)
+- `Runtime.current_output_bus` set in `play_event` from the event's bus name
+- `play_with_priority` routes the voice to that bus
+
+> Note: `render` still mixes voices into one dry buffer before bus accumulate; true isolation of SFX vs Music meters improves when per-voice `accumulate_voice` is wired. Mute/solo/volume on Master still affect the sum.
 
 ## Verify
 
 ```bash
 cargo run -p ramod_editor
-# Select event → Bus: Music → Play → mute SFX in Profiler → still hear Music bus
+# Set event Bus to Music → Play → Profiler Music row reacts when per-voice path is complete
 ```
