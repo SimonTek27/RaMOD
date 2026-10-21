@@ -410,14 +410,14 @@ impl eframe::App for RamodEditorApp {
                             }
                             self.status_msg = "Snapshot cleared (base restored)".into();
                         }
-                        ProfilerAction::SetEmitterPos { x, z } => {
+                        ProfilerAction::SetEmitterPos { x, z, vx, vz } => {
                             if let Some(a) = self.audio.as_mut() {
-                                a.set_emitter_xz(x, z);
+                                a.set_emitter_xz(x, z, vx, vz);
                             }
                         }
-                        ProfilerAction::SetListenerPos { x, z } => {
+                        ProfilerAction::SetListenerPos { x, z, vx, vz } => {
                             if let Some(a) = self.audio.as_mut() {
-                                a.set_listener_xz(x, z);
+                                a.set_listener_xz(x, z, vx, vz);
                             }
                         }
                         ProfilerAction::AddLowPass(id) => {
