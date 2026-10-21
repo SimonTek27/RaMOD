@@ -347,7 +347,13 @@ impl eframe::App for RamodEditorApp {
                         .as_ref()
                         .map(|a| a.profiler_snapshot())
                         .unwrap_or_default();
-                    match self.profiler.ui(ui, &snap) {
+                    let fx_names: Vec<String> = self
+                        .project
+                        .fx_presets
+                        .iter()
+                        .map(|p| p.name.clone())
+                        .collect();
+                    match self.profiler.ui(ui, &snap, &fx_names) {
                         ProfilerAction::Clear => {
                             if let Some(a) = self.audio.as_mut() {
                                 a.profiler_clear();
@@ -460,6 +466,38 @@ impl eframe::App for RamodEditorApp {
                                 a.remove_bus_insert(bus_id, index);
                             }
                             self.status_msg = "Insert removed".into();
+                        }
+                        ProfilerAction::SaveFxPreset => {
+                            let name = self.profiler.fx_preset_name.clone();
+                            if name.trim().is_empty() {
+                                self.status_msg = "FX preset name empty".into();
+                            } else if let Some(a) = self.audio.as_ref() {
+                                let inserts = a.capture_fx_chain();
+                                self.project.fx_presets.retain(|p| p.name != name);
+                                self.project.fx_presets.push(crate::project::FxPreset {
+                                    name: name.clone(),
+                                    inserts,
+                                });
+                                self.status_msg = format!("FX preset saved: {name}");
+                            }
+                        }
+                        ProfilerAction::ApplyFxPreset(name) => {
+                            if let Some(preset) = self
+                                .project
+                                .fx_presets
+                                .iter()
+                                .find(|p| p.name == name)
+                                .cloned()
+                            {
+                                if let Some(a) = self.audio.as_mut() {
+                                    a.apply_fx_chain(&preset.inserts);
+                                }
+                                self.status_msg = format!("FX preset applied: {name}");
+                            }
+                        }
+                        ProfilerAction::DeleteFxPreset(name) => {
+                            self.project.fx_presets.retain(|p| p.name != name);
+                            self.status_msg = format!("FX preset deleted: {name}");
                         }
                         ProfilerAction::None => {}
                     }
