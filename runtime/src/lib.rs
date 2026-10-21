@@ -91,6 +91,12 @@ struct DesignedPlayback {
     markers_fired: Vec<String>,
 }
 
+struct FadingOut {
+    remaining: f32,
+    duration: f32,
+    voices: Vec<VoiceHandle>,
+}
+
 pub struct Runtime {
     sample_rate: u32,
     channels: u16,
@@ -108,6 +114,8 @@ pub struct Runtime {
     designed_playbacks: Vec<DesignedPlayback>,
     recent_markers: Vec<String>,
     pending_transition: Option<(u64, String)>,
+    fading_out: Vec<FadingOut>,
+    transition_fade_secs: f32,
     profiler: crate::profiler::ProfilerSession,
     spectrum: crate::profiler::SpectrumAnalyzer,
     last_render_us: u32,
@@ -143,6 +151,8 @@ impl Runtime {
             designed_playbacks: Vec::new(),
             recent_markers: Vec::new(),
             pending_transition: None,
+            fading_out: Vec::new(),
+            transition_fade_secs: 0.3,
             profiler: crate::profiler::ProfilerSession::new(600),
             spectrum: crate::profiler::SpectrumAnalyzer::new(16),
             last_render_us: 0,
@@ -282,10 +292,50 @@ impl Runtime {
         }
 
         if let Some((stop_id, next_path)) = self.pending_transition.take() {
-            self.stop_instance(stop_id);
+            let fade = self.transition_fade_secs.max(0.01);
+            let mut fade_voices = Vec::new();
+            if let Some(pos) = self
+                .designed_playbacks
+                .iter()
+                .position(|p| p.instance_id == stop_id)
+            {
+                let pb = self.designed_playbacks.remove(pos);
+                fade_voices.extend(pb.voices);
+            }
+            if let Some(inst) = self.events.instance_mut(stop_id) {
+                if let Some(v) = inst.voice.take() {
+                    fade_voices.push(v);
+                }
+                inst.started = false;
+            }
+            self.scheduled.retain(|s| s.instance_id != Some(stop_id));
             self.events.release_instance(stop_id);
+            if !fade_voices.is_empty() {
+                self.fading_out.push(FadingOut {
+                    remaining: fade,
+                    duration: fade,
+                    voices: fade_voices,
+                });
+            }
             let _ = self.play_event(&next_path);
         }
+
+        let mut still_fade = Vec::new();
+        for mut f in self.fading_out.drain(..) {
+            f.remaining -= dt;
+            if f.remaining <= 0.0 {
+                for v in f.voices {
+                    self.voices.stop(v);
+                }
+            } else {
+                let g = (f.remaining / f.duration).clamp(0.0, 1.0);
+                for &v in &f.voices {
+                    self.voices.set_gain(v, g);
+                }
+                still_fade.push(f);
+            }
+        }
+        self.fading_out = still_fade;
 
         self.voices.advance_envelopes(dt);
         self.voices.reap_finished();
@@ -562,6 +612,18 @@ impl Runtime {
 
     pub fn clear_fired_markers(&mut self) {
         self.recent_markers.clear();
+    }
+
+    pub fn set_transition_fade(&mut self, secs: f32) {
+        self.transition_fade_secs = secs.max(0.0);
+    }
+
+    pub fn transition_fade(&self) -> f32 {
+        self.transition_fade_secs
+    }
+
+    pub fn current_designed_instance(&self) -> Option<u64> {
+        self.designed_playbacks.last().map(|p| p.instance_id)
     }
 
     pub fn release_instance(&mut self, id: u64) {
