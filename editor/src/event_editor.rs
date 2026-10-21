@@ -125,6 +125,33 @@ pub fn show_event_editor(
         );
     }
 
+    // Markers row
+    let (mark_rect, _) =
+        ui.allocate_exact_size(egui::vec2(timeline_w, 16.0), egui::Sense::click());
+    {
+        let painter = ui.painter_at(mark_rect);
+        painter.rect_filled(mark_rect, 0.0, egui::Color32::from_rgb(30, 30, 32));
+        if let Some(e) = project.events.get(event_index) {
+            for m in &e.markers {
+                let x = mark_rect.left() + (m.time / length) * mark_rect.width();
+                painter.line_segment(
+                    [
+                        egui::pos2(x, mark_rect.top()),
+                        egui::pos2(x, mark_rect.bottom()),
+                    ],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 180, 40)),
+                );
+                painter.text(
+                    egui::pos2(x + 3.0, mark_rect.top()),
+                    egui::Align2::LEFT_TOP,
+                    &m.name,
+                    egui::FontId::proportional(10.0),
+                    egui::Color32::from_rgb(255, 200, 80),
+                );
+            }
+        }
+    }
+
     let track_h = 48.0;
     let colors = [
         egui::Color32::from_rgb(70, 130, 180),
@@ -263,6 +290,40 @@ pub fn show_event_editor(
                     });
                 }
             }
+        }
+    }
+
+    ui.separator();
+    ui.label("Markers");
+    if let Some(e) = project.events.get_mut(event_index) {
+        ui.horizontal(|ui| {
+            if ui.button("+ Marker").clicked() {
+                let t = (e.length * 0.5).max(0.0);
+                e.markers
+                    .push(crate::project::MarkerEntry::new(format!("M{}", e.markers.len()), t));
+                dirty = true;
+            }
+        });
+        let mut remove = None;
+        for (mi, m) in e.markers.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.text_edit_singleline(&mut m.name).changed() {
+                    dirty = true;
+                }
+                if ui
+                    .add(egui::DragValue::new(&mut m.time).speed(0.01).range(0.0..=60.0).prefix("t "))
+                    .changed()
+                {
+                    dirty = true;
+                }
+                if ui.small_button("x").clicked() {
+                    remove = Some(mi);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            e.markers.remove(i);
+            dirty = true;
         }
     }
 
