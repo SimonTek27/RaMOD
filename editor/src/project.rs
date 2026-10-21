@@ -11,7 +11,6 @@ pub struct Project {
     pub events: Vec<EventEntry>,
     pub banks: Vec<BankEntry>,
     pub assets: Vec<AssetEntry>,
-    /// Named bus FX chains (S7.15).
     #[serde(default)]
     pub fx_presets: Vec<FxPreset>,
 }
@@ -23,7 +22,6 @@ pub struct FxPreset {
     pub inserts: Vec<FxInsertSpec>,
 }
 
-/// One insert in a preset (bus by name + params).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FxInsertSpec {
     pub bus: String,
@@ -65,27 +63,14 @@ pub struct EventEntry {
     pub output_bus: String,
 }
 
-fn default_output_bus() -> String {
-    "SFX".into()
-}
-
-fn default_priority() -> i32 {
-    128
-}
-fn default_min_dist() -> f32 {
-    1.0
-}
-fn default_max_dist() -> f32 {
-    50.0
-}
-fn default_event_len() -> f32 {
-    4.0
-}
+fn default_output_bus() -> String { "SFX".into() }
+fn default_priority() -> i32 { 128 }
+fn default_min_dist() -> f32 { 1.0 }
+fn default_max_dist() -> f32 { 50.0 }
+fn default_event_len() -> f32 { 4.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BankEntry {
-    pub name: String,
-}
+pub struct BankEntry { pub name: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
@@ -107,12 +92,7 @@ pub struct TrackEntry {
 
 impl TrackEntry {
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            instruments: Vec::new(),
-            mute: false,
-            solo: false,
-        }
+        Self { name: name.into(), instruments: Vec::new(), mute: false, solo: false }
     }
 }
 
@@ -130,12 +110,8 @@ pub struct InstrumentEntry {
     pub looping: bool,
 }
 
-fn default_inst_len() -> f32 {
-    0.5
-}
-fn default_prob() -> f32 {
-    1.0
-}
+fn default_inst_len() -> f32 { 0.5 }
+fn default_prob() -> f32 { 1.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationEntry {
@@ -144,11 +120,8 @@ pub struct AutomationEntry {
 }
 
 impl AutomationEntry {
-    pub fn intensity_fade(start: f32, end: f32, at: f32) -> Self {
-        Self {
-            parameter: "Intensity".into(),
-            keys: vec![(0.0, start), (at, end)],
-        }
+    pub fn intensity_fade(start: f32, end: f32, t_end: f32) -> Self {
+        Self { parameter: "Intensity".into(), keys: vec![(0.0, start), (t_end, end)] }
     }
 }
 
@@ -227,9 +200,7 @@ impl Default for Project {
                     output_bus: "SFX".into(),
                 },
             ],
-            banks: vec![BankEntry {
-                name: "Master".into(),
-            }],
+            banks: vec![BankEntry { name: "Master".into() }],
             assets: vec![AssetEntry {
                 name: "demo_beep".into(),
                 source_path: None,
@@ -246,19 +217,53 @@ impl Project {
         std::fs::write(path, json).map_err(|e| e.to_string())
     }
 
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let data = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let mut p: Project = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-        p.path = Some(path.to_path_buf());
-        Ok(p)
+    pub fn add_event(&mut self, path: String) {
+        self.events.push(EventEntry {
+            path,
+            bank: self.banks.first().map(|b| b.name.clone()).unwrap_or_else(|| "Master".into()),
+            asset_index: None,
+            looping: false,
+            is_3d: false,
+            priority: 128,
+            min_distance: 1.0,
+            max_distance: 50.0,
+            parameters: vec![("Intensity".into(), 1.0)],
+            tracks: vec![TrackEntry::new("Audio 1")],
+            length: 4.0,
+            automation: Vec::new(),
+            markers: Vec::new(),
+            output_bus: "SFX".into(),
+        });
+    }
+
+    pub fn add_track(&mut self, event_index: usize, name: String) -> Result<(), String> {
+        let e = self.events.get_mut(event_index).ok_or("invalid event")?;
+        e.tracks.push(TrackEntry::new(name));
+        Ok(())
+    }
+
+    pub fn add_instrument(
+        &mut self,
+        event_index: usize,
+        track_index: usize,
+        name: String,
+        asset_index: Option<usize>,
+    ) -> Result<(), String> {
+        let e = self.events.get_mut(event_index).ok_or("invalid event")?;
+        let t = e.tracks.get_mut(track_index).ok_or("invalid track")?;
+        t.instruments.push(InstrumentEntry {
+            name,
+            asset_index,
+            start_time: 0.0,
+            length: 0.5,
+            probability: 1.0,
+            looping: false,
+        });
+        Ok(())
     }
 
     pub fn add_asset_file(&mut self, path: &Path) -> usize {
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("asset")
-            .to_string();
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("asset").to_string();
         self.assets.push(AssetEntry {
             name,
             source_path: Some(path.display().to_string()),
@@ -267,46 +272,39 @@ impl Project {
         self.assets.len() - 1
     }
 
-    pub fn assign_asset_to_event(&mut self, event_i: usize, asset_i: usize) -> Result<(), String> {
-        if event_i >= self.events.len() {
-            return Err("invalid event".into());
-        }
-        if asset_i >= self.assets.len() {
-            return Err("invalid asset".into());
-        }
-        self.events[event_i].asset_index = Some(asset_i);
-        if let Some(track) = self.events[event_i].tracks.first_mut() {
+    pub fn assign_asset_to_event(&mut self, event_index: usize, asset_index: usize) -> Result<(), String> {
+        if event_index >= self.events.len() { return Err("invalid event".into()); }
+        if asset_index >= self.assets.len() { return Err("invalid asset".into()); }
+        self.events[event_index].asset_index = Some(asset_index);
+        if let Some(track) = self.events[event_index].tracks.first_mut() {
             if let Some(inst) = track.instruments.first_mut() {
-                inst.asset_index = Some(asset_i);
+                inst.asset_index = Some(asset_index);
             }
         }
         Ok(())
     }
 
-    pub fn export_bank_build(&self, bank: &str, out_dir: &Path) -> Result<PathBuf, String> {
-        let dir = out_dir.join(bank);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let events: Vec<_> = self
-            .events
-            .iter()
-            .filter(|e| e.bank == bank)
-            .map(|e| {
-                serde_json::json!({
-                    "path": e.path,
-                    "asset": e.asset_index.and_then(|i| self.assets.get(i).map(|a| a.name.clone())),
-                    "output_bus": e.output_bus,
-                    "is_3d": e.is_3d,
-                    "looping": e.looping,
-                })
+    pub fn export_bank_build(&self, bank_name: &str, out_dir: &Path) -> Result<PathBuf, String> {
+        let bank_dir = out_dir.join(bank_name);
+        std::fs::create_dir_all(&bank_dir).map_err(|e| e.to_string())?;
+        let events: Vec<_> = self.events.iter().filter(|e| e.bank == bank_name).map(|e| {
+            serde_json::json!({
+                "path": e.path,
+                "asset": e.asset_index.and_then(|i| self.assets.get(i).map(|a| a.name.clone())),
+                "output_bus": e.output_bus,
+                "is_3d": e.is_3d,
+                "looping": e.looping,
             })
-            .collect();
-        let manifest = serde_json::json!({
-            "bank": bank,
-            "events": events,
-        });
-        let path = dir.join("bank.json");
+        }).collect();
+        let manifest = serde_json::json!({ "bank": bank_name, "events": events });
+        let manifest_path = bank_dir.join("bank.json");
         let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
-        std::fs::write(&path, json).map_err(|e| e.to_string())?;
-        Ok(path)
+        std::fs::write(&manifest_path, json).map_err(|e| e.to_string())?;
+        let _ = self.export_fsb_bank(bank_name, &bank_dir.join(format!("{bank_name}.fsb")));
+        Ok(manifest_path)
+    }
+
+    pub fn export_fsb_bank(&self, _bank_name: &str, _out_path: &Path) -> Result<usize, String> {
+        Ok(0)
     }
 }
