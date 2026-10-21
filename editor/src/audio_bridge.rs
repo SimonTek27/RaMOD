@@ -277,6 +277,16 @@ impl AudioBridge {
                 .iter()
                 .map(|b| (b.id, self.rt.bus_insert_count(BusId(b.id))))
                 .collect(),
+            bus_inserts: {
+                let mut out = Vec::new();
+                for b in self.rt.list_bus_meters() {
+                    for (i, fx) in self.rt.list_bus_inserts(BusId(b.id)).into_iter().enumerate()
+                    {
+                        out.push(BusInsertInfo::from_effect(b.id, i, &fx));
+                    }
+                }
+                out
+            },
         }
     }
 
@@ -360,26 +370,32 @@ impl AudioBridge {
         self.rt
             .add_bus_insert(BusId(bus_id), InsertEffect::lowpass(2000.0));
     }
-
     pub fn add_bus_highpass(&mut self, bus_id: u32) {
         self.rt
             .add_bus_insert(BusId(bus_id), InsertEffect::highpass(200.0));
     }
-
     pub fn add_bus_compressor(&mut self, bus_id: u32) {
         self.rt.add_bus_insert(
             BusId(bus_id),
             InsertEffect::compressor(-18.0, 4.0, 3.0),
         );
     }
-
     pub fn add_bus_reverb(&mut self, bus_id: u32) {
         self.rt
             .add_bus_insert(BusId(bus_id), InsertEffect::reverb(45.0, 0.35, 0.25));
     }
-
     pub fn clear_bus_inserts(&mut self, bus_id: u32) {
         self.rt.clear_bus_inserts(BusId(bus_id));
+    }
+
+    pub fn set_bus_insert_info(&mut self, info: &BusInsertInfo) {
+        let fx = info.to_effect();
+        self.rt
+            .set_bus_insert(BusId(info.bus_id), info.index, fx);
+    }
+
+    pub fn remove_bus_insert(&mut self, bus_id: u32, index: usize) {
+        self.rt.remove_bus_insert(BusId(bus_id), index);
     }
 }
 
@@ -403,6 +419,89 @@ pub struct ProfilerSnapshot {
     pub emitters: Vec<EmitterDebug>,
     pub listener: (f32, f32, f32),
     pub insert_counts: Vec<(u32, usize)>,
+    pub bus_inserts: Vec<BusInsertInfo>,
+}
+
+/// Editable insert row for the profiler.
+#[derive(Debug, Clone)]
+pub struct BusInsertInfo {
+    pub bus_id: u32,
+    pub index: usize,
+    pub kind: String,
+    pub p0: f32,
+    pub p1: f32,
+    pub p2: f32,
+}
+
+impl BusInsertInfo {
+    pub fn from_effect(bus_id: u32, index: usize, fx: &InsertEffect) -> Self {
+        match fx {
+            InsertEffect::Gain { gain_db } => Self {
+                bus_id,
+                index,
+                kind: "Gain".into(),
+                p0: *gain_db,
+                p1: 0.0,
+                p2: 0.0,
+            },
+            InsertEffect::LowPass { cutoff_hz } => Self {
+                bus_id,
+                index,
+                kind: "LowPass".into(),
+                p0: *cutoff_hz,
+                p1: 0.0,
+                p2: 0.0,
+            },
+            InsertEffect::HighPass { cutoff_hz } => Self {
+                bus_id,
+                index,
+                kind: "HighPass".into(),
+                p0: *cutoff_hz,
+                p1: 0.0,
+                p2: 0.0,
+            },
+            InsertEffect::Compressor {
+                threshold_db,
+                ratio,
+                makeup_db,
+            } => Self {
+                bus_id,
+                index,
+                kind: "Compressor".into(),
+                p0: *threshold_db,
+                p1: *ratio,
+                p2: *makeup_db,
+            },
+            InsertEffect::Reverb {
+                delay_ms,
+                feedback,
+                wet,
+            } => Self {
+                bus_id,
+                index,
+                kind: "Reverb".into(),
+                p0: *delay_ms,
+                p1: *feedback,
+                p2: *wet,
+            },
+        }
+    }
+
+    pub fn to_effect(&self) -> InsertEffect {
+        match self.kind.as_str() {
+            "Gain" => InsertEffect::gain(self.p0),
+            "HighPass" => InsertEffect::highpass(self.p0.max(20.0)),
+            "Compressor" => {
+                InsertEffect::compressor(self.p0, self.p1.max(1.0), self.p2)
+            }
+            "Reverb" => InsertEffect::reverb(
+                self.p0.max(1.0),
+                self.p1.clamp(0.0, 0.95),
+                self.p2.clamp(0.0, 1.0),
+            ),
+            _ => InsertEffect::lowpass(self.p0.max(20.0)),
+        }
+    }
 }
 
 struct ResolvedPcm {
