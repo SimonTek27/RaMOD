@@ -19,6 +19,8 @@ pub enum ProfilerAction {
     None,
     Clear,
     ExportNdjson,
+    ToggleMute(u32),
+    ToggleSolo(u32),
 }
 
 impl ProfilerPanel {
@@ -89,14 +91,39 @@ impl ProfilerPanel {
         } else {
             for b in &snap.bus_meters {
                 ui.horizontal(|ui| {
-                    let flags = match (b.mute, b.solo) {
-                        (true, _) => " [M]",
-                        (_, true) => " [S]",
-                        _ => "",
-                    };
-                    ui.label(format!("{}{}  {:+.1} dB", b.name, flags, b.volume_db));
+                    ui.label(format!("{}  {:+.1} dB", b.name, b.volume_db));
+                    let mute_label = if b.mute { "M●" } else { "M" };
+                    let solo_label = if b.solo { "S●" } else { "S" };
+                    if ui
+                        .add(
+                            egui::Button::new(mute_label)
+                                .fill(if b.mute {
+                                    egui::Color32::from_rgb(120, 40, 40)
+                                } else {
+                                    egui::Color32::from_rgb(50, 50, 55)
+                                })
+                                .min_size(egui::vec2(22.0, 18.0)),
+                        )
+                        .clicked()
+                    {
+                        action = ProfilerAction::ToggleMute(b.id);
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(solo_label)
+                                .fill(if b.solo {
+                                    egui::Color32::from_rgb(140, 120, 30)
+                                } else {
+                                    egui::Color32::from_rgb(50, 50, 55)
+                                })
+                                .min_size(egui::vec2(22.0, 18.0)),
+                        )
+                        .clicked()
+                    {
+                        action = ProfilerAction::ToggleSolo(b.id);
+                    }
                     let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(100.0, 12.0), egui::Sense::hover());
+                        ui.allocate_exact_size(egui::vec2(90.0, 12.0), egui::Sense::hover());
                     let painter = ui.painter();
                     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(28, 28, 30));
                     let fill = b.peak.clamp(0.0, 1.0) * rect.width();

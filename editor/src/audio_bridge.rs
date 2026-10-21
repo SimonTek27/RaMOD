@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, AutomationCurve, BusMeterInfo, DesignedEvent, EventDescription, InstrumentDef,
-    PlayParams, Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
+    Attenuation, AutomationCurve, BusId, BusMeterInfo, DesignedEvent, EventDescription,
+    InstrumentDef, PlayParams, Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -254,6 +254,30 @@ impl AudioBridge {
 
     pub fn profiler_ndjson(&self) -> String {
         self.rt.profiler_session().to_ndjson()
+    }
+
+    pub fn toggle_bus_mute(&mut self, bus_id: u32) {
+        let id = BusId(bus_id);
+        let muted = self
+            .rt
+            .list_bus_meters()
+            .iter()
+            .find(|b| b.id == bus_id)
+            .map(|b| b.mute)
+            .unwrap_or(false);
+        self.rt.set_bus_mute(id, !muted);
+    }
+
+    pub fn toggle_bus_solo(&mut self, bus_id: u32) {
+        let id = BusId(bus_id);
+        let solo = self
+            .rt
+            .list_bus_meters()
+            .iter()
+            .find(|b| b.id == bus_id)
+            .map(|b| b.solo)
+            .unwrap_or(false);
+        self.rt.set_bus_solo(id, !solo);
     }
 }
 
