@@ -313,6 +313,12 @@ impl eframe::App for RamodEditorApp {
                     if let Some(a) = self.audio.as_mut() {
                         a.set_parameter("Intensity", self.intensity);
                     }
+                    // Live Update → game runtime
+                    if let (Some(c), Some(path)) =
+                        (self.live_client.as_mut(), self.selected_path())
+                    {
+                        let _ = c.set_param(path, "Intensity", self.intensity);
+                    }
                 }
             });
         });
