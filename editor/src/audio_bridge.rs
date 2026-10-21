@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, AutomationCurve, BusId, BusMeterInfo, DesignedEvent, EventDescription,
-    InstrumentDef, PlayParams, Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
+    Attenuation, AutomationCurve, BusId, BusMeterInfo, DesignedEvent, EmitterDebug,
+    EventDescription, InstrumentDef, PlayParams, Runtime, RuntimeConfig, TimelineTrack,
+    TransitionMarker,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -265,6 +266,11 @@ impl AudioBridge {
             },
             snapshot_names: self.rt.snapshot_names(),
             active_snapshot: self.rt.active_snapshot(),
+            emitters: frame.map(|f| f.emitters.clone()).unwrap_or_default(),
+            listener: {
+                let l = self.rt.listener();
+                (l.position.x, l.position.y, l.position.z)
+            },
         }
     }
 
@@ -346,6 +352,8 @@ pub struct ProfilerSnapshot {
     pub voice_history: Vec<u32>,
     pub snapshot_names: Vec<String>,
     pub active_snapshot: Option<(String, f32)>,
+    pub emitters: Vec<EmitterDebug>,
+    pub listener: (f32, f32, f32),
 }
 
 struct ResolvedPcm {
