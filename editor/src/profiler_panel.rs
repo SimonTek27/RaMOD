@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, timelines).
+//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, snapshots).
 
 use eframe::egui;
 
@@ -7,11 +7,15 @@ use crate::audio_bridge::ProfilerSnapshot;
 #[derive(Debug, Clone)]
 pub struct ProfilerPanel {
     pub show: bool,
+    pub snap_name: String,
 }
 
 impl Default for ProfilerPanel {
     fn default() -> Self {
-        Self { show: true }
+        Self {
+            show: true,
+            snap_name: "Combat".into(),
+        }
     }
 }
 
@@ -22,6 +26,10 @@ pub enum ProfilerAction {
     ToggleMute(u32),
     ToggleSolo(u32),
     SetVolume(u32, f32),
+    CaptureBase,
+    SaveSnapshot,
+    TriggerSnapshot { name: String, weight: f32 },
+    ClearSnapshot,
 }
 
 impl ProfilerPanel {
@@ -162,6 +170,51 @@ impl ProfilerPanel {
                         );
                     }
                     ui.weak(format!("p {:.2}", b.peak));
+                });
+            }
+        }
+
+        ui.separator();
+        ui.label("Snapshots");
+        ui.horizontal(|ui| {
+            if ui.button("Capture base").clicked() {
+                action = ProfilerAction::CaptureBase;
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.snap_name)
+                    .desired_width(90.0)
+                    .hint_text("name"),
+            );
+            if ui.button("Save").clicked() {
+                action = ProfilerAction::SaveSnapshot;
+            }
+            if ui.button("Clear active").clicked() {
+                action = ProfilerAction::ClearSnapshot;
+            }
+        });
+        if let Some((ref name, w)) = &snap.active_snapshot {
+            ui.weak(format!("active: {name} @ {:.0}%", w * 100.0));
+        } else {
+            ui.weak("active: (none)");
+        }
+        if snap.snapshot_names.is_empty() {
+            ui.weak("No snaps — tweak bus dB, Capture base, Save");
+        } else {
+            for name in &snap.snapshot_names {
+                ui.horizontal(|ui| {
+                    ui.monospace(name);
+                    if ui.small_button("50%").clicked() {
+                        action = ProfilerAction::TriggerSnapshot {
+                            name: name.clone(),
+                            weight: 0.5,
+                        };
+                    }
+                    if ui.small_button("100%").clicked() {
+                        action = ProfilerAction::TriggerSnapshot {
+                            name: name.clone(),
+                            weight: 1.0,
+                        };
+                    }
                 });
             }
         }
