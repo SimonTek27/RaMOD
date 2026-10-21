@@ -323,6 +323,36 @@ impl eframe::App for RamodEditorApp {
                         let _ = c.set_param(path, "Intensity", self.intensity);
                     }
                 }
+                ui.separator();
+                let (peak, rms) = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.master_levels())
+                    .unwrap_or((0.0, 0.0));
+                ui.label(format!("Peak {peak:.2}  RMS {rms:.2}"));
+                let meter_w = 80.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(meter_w, 14.0), egui::Sense::hover());
+                let painter = ui.painter();
+                painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(30, 30, 30));
+                let fill = (peak.clamp(0.0, 1.0)) * meter_w;
+                if fill > 0.5 {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(rect.min, egui::vec2(fill, 14.0)),
+                        2.0,
+                        if peak > 0.9 {
+                            egui::Color32::from_rgb(220, 60, 60)
+                        } else {
+                            egui::Color32::from_rgb(60, 180, 90)
+                        },
+                    );
+                }
+                if let Some(a) = self.audio.as_ref() {
+                    let marks = a.last_fired_markers();
+                    if let Some(last) = marks.last() {
+                        ui.label(format!("marker: {last}"));
+                    }
+                }
             });
         });
 
