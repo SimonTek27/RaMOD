@@ -1,14 +1,13 @@
-//! Event descriptions, instances, parameters (Studio-like API).
+//! Event descriptions and instances.
 
 use std::collections::HashMap;
 
 use crate::buffer::BufferHandle;
-use crate::spatial::{Attributes3d, Attenuation};
+use crate::spatial::{Attenuation, Attributes3d};
 use crate::voice::{PlayParams, VoiceHandle};
 
-/// Opaque event path, e.g. `event:/sfx/explosion`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EventPath(pub String);
+pub struct EventPath(String);
 
 impl EventPath {
     pub fn new(path: impl Into<String>) -> Self {
@@ -20,13 +19,12 @@ impl EventPath {
     }
 }
 
-impl From<&str> for EventPath {
-    fn from(value: &str) -> Self {
-        Self::new(value)
+impl std::fmt::Display for EventPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
-/// Template for an event (like FMOD EventDescription).
 #[derive(Debug, Clone)]
 pub struct EventDescription {
     pub path: EventPath,
@@ -36,6 +34,7 @@ pub struct EventDescription {
     pub parameters: HashMap<String, f32>,
     pub priority: i32,
     pub looping: bool,
+    pub output_bus: String,
 }
 
 impl EventDescription {
@@ -48,6 +47,7 @@ impl EventDescription {
             parameters: HashMap::new(),
             priority: 128,
             looping: false,
+            output_bus: "SFX".into(),
         }
     }
 
@@ -67,27 +67,31 @@ impl EventDescription {
         self
     }
 
+    pub fn with_output_bus(mut self, bus: impl Into<String>) -> Self {
+        self.output_bus = bus.into();
+        self
+    }
+
     pub fn with_parameter(mut self, name: impl Into<String>, default: f32) -> Self {
         self.parameters.insert(name.into(), default);
         self
     }
 }
 
-/// Live instance of an event (like FMOD EventInstance).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EventInstance {
-    pub(crate) id: u64,
-    pub(crate) description_path: EventPath,
-    pub(crate) buffer: BufferHandle,
-    pub(crate) voice: Option<VoiceHandle>,
-    pub(crate) parameters: HashMap<String, f32>,
-    pub(crate) attributes: Attributes3d,
-    pub(crate) is_3d: bool,
-    pub(crate) attenuation: Attenuation,
-    pub(crate) priority: i32,
-    pub(crate) looping: bool,
-    pub(crate) started: bool,
-    pub(crate) gain_user: f32,
+    pub id: u64,
+    pub path: EventPath,
+    pub buffer: BufferHandle,
+    pub is_3d: bool,
+    pub attenuation: Attenuation,
+    pub parameters: HashMap<String, f32>,
+    pub priority: i32,
+    pub looping: bool,
+    pub gain_user: f32,
+    pub voice: Option<VoiceHandle>,
+    pub started: bool,
+    pub attributes: Attributes3d,
 }
 
 impl EventInstance {
@@ -96,7 +100,7 @@ impl EventInstance {
     }
 
     pub fn path(&self) -> &EventPath {
-        &self.description_path
+        &self.path
     }
 
     pub fn set_parameter(&mut self, name: &str, value: f32) -> bool {
@@ -128,7 +132,7 @@ impl EventInstance {
         self.started && self.voice.is_some()
     }
 
-    pub(crate) fn play_params(&self) -> PlayParams {
+    pub fn play_params(&self) -> PlayParams {
         PlayParams {
             gain: self.gain_user,
             looped: self.looping,
@@ -136,25 +140,26 @@ impl EventInstance {
     }
 }
 
-pub(crate) struct EventSystem {
+#[derive(Debug)]
+pub struct EventSystem {
+    next_id: u64,
     descriptions: HashMap<String, EventDescription>,
     instances: HashMap<u64, EventInstance>,
-    next_instance_id: u64,
     listener: Attributes3d,
 }
 
 impl EventSystem {
     pub fn new() -> Self {
         Self {
+            next_id: 1,
             descriptions: HashMap::new(),
             instances: HashMap::new(),
-            next_instance_id: 1,
             listener: Attributes3d::default(),
         }
     }
 
     pub fn register(&mut self, desc: EventDescription) {
-        self.descriptions.insert(desc.path.0.clone(), desc);
+        self.descriptions.insert(desc.path.as_str().to_string(), desc);
     }
 
     pub fn get_description(&self, path: &str) -> Option<&EventDescription> {
@@ -171,21 +176,21 @@ impl EventSystem {
 
     pub fn create_instance(&mut self, path: &str) -> Option<u64> {
         let desc = self.descriptions.get(path)?;
-        let id = self.next_instance_id;
-        self.next_instance_id += 1;
+        let id = self.next_id;
+        self.next_id += 1;
         let inst = EventInstance {
             id,
-            description_path: desc.path.clone(),
+            path: desc.path.clone(),
             buffer: desc.buffer,
-            voice: None,
-            parameters: desc.parameters.clone(),
-            attributes: Attributes3d::default(),
             is_3d: desc.is_3d,
             attenuation: desc.attenuation,
+            parameters: desc.parameters.clone(),
             priority: desc.priority,
             looping: desc.looping,
-            started: false,
             gain_user: 1.0,
+            voice: None,
+            started: false,
+            attributes: Attributes3d::default(),
         };
         self.instances.insert(id, inst);
         Some(id)
