@@ -583,6 +583,11 @@ impl eframe::App for RamodEditorApp {
                                 a.toggle_bus_solo(id);
                             }
                         }
+                        ProfilerAction::SetVolume(id, db) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.set_bus_volume_db(id, db);
+                            }
+                        }
                         ProfilerAction::None => {}
                     }
                 });
