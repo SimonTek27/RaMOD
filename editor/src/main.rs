@@ -1,12 +1,14 @@
-//! RaMOD Event Editor — multi-format import, DnD, audible preview, bank build.
+//! RaMOD Event Editor — multi-format import, DnD, audible preview, bank build, multi-track.
 
 mod audio_bridge;
 mod live_client;
 mod project;
+mod event_editor;
 mod waveform_panel;
 
 use audio_bridge::AudioBridge;
 use eframe::egui;
+use event_editor::{ensure_default_track, show_event_editor, EventEditorAction, EventEditorState};
 use live_client::EditorLiveClient;
 use project::Project;
 use std::path::PathBuf;
@@ -55,6 +57,7 @@ struct RamodEditorApp {
     live_client: Option<EditorLiveClient>,
     waveform: WaveformPanel,
     asset_import_path: String,
+    event_editor: EventEditorState,
 }
 
 impl RamodEditorApp {
@@ -75,12 +78,13 @@ impl RamodEditorApp {
             selected_event: Some(0),
             selected_asset: Some(0),
             live_update: false,
-            status_msg: "Ready — import asset → assign → build bank".into(),
+            status_msg: "Ready — multi-track Event Editor".into(),
             audio,
             intensity: 1.0,
             live_client: None,
             waveform,
             asset_import_path: String::new(),
+            event_editor: EventEditorState::default(),
         }
     }
 
@@ -313,7 +317,6 @@ impl eframe::App for RamodEditorApp {
                     if let Some(a) = self.audio.as_mut() {
                         a.set_parameter("Intensity", self.intensity);
                     }
-                    // Live Update → game runtime
                     if let (Some(c), Some(path)) =
                         (self.live_client.as_mut(), self.selected_path())
                     {
@@ -501,11 +504,23 @@ impl eframe::App for RamodEditorApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Overview");
-            if let Some(p) = self.selected_path() {
-                ui.label(p);
+            if let Some(ei) = self.selected_event {
+                if let Some(ev) = self.project.events.get_mut(ei) {
+                    ensure_default_track(ev);
+                }
+                match show_event_editor(ui, &mut self.project, ei, &mut self.event_editor) {
+                    EventEditorAction::Changed => {
+                        self.status_msg = "Event timeline updated".into();
+                        if let Some(a) = self.audio.as_mut() {
+                            a.sync_project(&self.project);
+                        }
+                    }
+                    EventEditorAction::None => {}
+                }
+            } else {
+                ui.heading("Overview");
+                ui.weak("Select an event — multi-track timeline appears here");
             }
-            ui.weak("Import asset → Assign to event → Build bank · Waveform ▶ Preview");
         });
 
         if matches!(self.transport, TransportState::Playing) {
