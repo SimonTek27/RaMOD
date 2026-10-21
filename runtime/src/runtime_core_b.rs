@@ -410,6 +410,18 @@
         self.mixer.insert_count(bus)
     }
 
+    pub fn list_bus_inserts(&self, bus: BusId) -> Vec<InsertEffect> {
+        self.mixer.list_inserts(bus)
+    }
+
+    pub fn set_bus_insert(&mut self, bus: BusId, index: usize, effect: InsertEffect) {
+        self.mixer.set_insert(bus, index, effect);
+    }
+
+    pub fn remove_bus_insert(&mut self, bus: BusId, index: usize) {
+        self.mixer.remove_insert(bus, index);
+    }
+
     pub fn register_snapshot(&mut self, snapshot: Snapshot) {
         self.snapshots.add(snapshot);
     }
