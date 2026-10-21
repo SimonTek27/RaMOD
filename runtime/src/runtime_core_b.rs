@@ -69,7 +69,6 @@
             let Some(inst) = self.events.instance(id) else {
                 continue;
             };
-            // Include designed multi-track instances (started without a single voice handle).
             if !inst.is_playing() && !inst.started {
                 continue;
             }
@@ -401,6 +400,14 @@
     }
     pub fn add_bus_insert(&mut self, bus: BusId, effect: InsertEffect) {
         self.mixer.add_insert(bus, effect);
+    }
+
+    pub fn clear_bus_inserts(&mut self, bus: BusId) {
+        self.mixer.clear_inserts(bus);
+    }
+
+    pub fn bus_insert_count(&self, bus: BusId) -> usize {
+        self.mixer.insert_count(bus)
     }
 
     pub fn register_snapshot(&mut self, snapshot: Snapshot) {
