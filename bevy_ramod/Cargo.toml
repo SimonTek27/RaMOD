@@ -18,7 +18,7 @@ bevy = { version = "0.15", default-features = false, features = [
     "x11",
     "multi_threaded",
 ] }
-ramod = { path = ".." }
+ramod = { path = "..", default-features = true, features = ["decoder-rust"] }
 ramod_runtime = { path = "../runtime", default-features = false, features = ["backend-cpal"] }
 ramod_waveform = { path = "../waveform" }
 serde = { version = "1", features = ["derive"] }

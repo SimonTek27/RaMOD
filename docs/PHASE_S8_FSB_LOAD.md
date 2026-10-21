@@ -14,22 +14,30 @@ LoadBank::new("build/Master/Master.fsb")
   → event:/fsb/<sample_name>
 ```
 
-`LoadBank` / `load_bank_path` also accept:
+Also works with **game/mod Vorbis FSB5** banks (FSB mode = Vorbis):
+`build_ogg` + `lewton` → interleaved f32 PCM.
+
+`LoadBank` / `load_bank_path` accept:
 
 | Path | Behaviour |
 |------|-----------|
-| `*.fsb` | PCM samples → `event:/fsb/<name>` |
+| `*.fsb` | samples → `event:/fsb/<name>` (PCM or Vorbis) |
 | `bank.json` | editor manifest + assets |
 | directory | prefers `Master.fsb`, else `bank.json` |
+
+## Formats
+
+| Format | Path |
+|--------|------|
+| PCM8 / PCM16 / PCM32 / Float | direct sample payload |
+| **Vorbis** | `decode_sample_to_pcm` (pure Rust) |
+| other (XMA, AT9, …) | skipped with warning |
 
 ## Requirements
 
 ```bash
 cargo build -p ramod   # restores full src/fsb.rs via recovery/fsb.z*
 ```
-
-PCM8 / PCM16 / PCM32 / PcmFloat are decoded. Vorbis-only banks still need
-`bank.json` + decoded assets (or a future Vorbis path in `load_fsb`).
 
 ## Example
 
