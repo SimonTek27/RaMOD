@@ -69,7 +69,8 @@
             let Some(inst) = self.events.instance(id) else {
                 continue;
             };
-            if !inst.is_playing() {
+            // Include designed multi-track instances (started without a single voice handle).
+            if !inst.is_playing() && !inst.started {
                 continue;
             }
             let path = inst.path().as_str().to_string();
