@@ -23,7 +23,7 @@ pub mod prelude {
         AudioEmitter, AudioListener, AudioParameter, AudioParameters, LoadBank, PlayOnSpawn,
         SpatialAudioBundle, Velocity,
     };
-    pub use crate::plugin::{RamodAudio, RamodPlugin};
+    pub use crate::plugin::{LiveUpdateHub, RamodAudio, RamodPlugin};
     pub use ramod_runtime::{
         Attributes3d, Attenuation, EventDescription, PlayParams, RuntimeConfig, Vec3,
     };
@@ -34,4 +34,4 @@ pub use components::{
     AudioEmitter, AudioListener, AudioParameter, AudioParameters, LoadBank, PlayOnSpawn,
     SpatialAudioBundle, Velocity,
 };
-pub use plugin::{RamodAudio, RamodPlugin};
+pub use plugin::{LiveUpdateHub, RamodAudio, RamodPlugin};

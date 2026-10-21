@@ -19,7 +19,7 @@ bevy = { version = "0.15", default-features = false, features = [
     "multi_threaded",
 ] }
 ramod = { path = "..", default-features = true, features = ["decoder-rust"] }
-ramod_runtime = { path = "../runtime", default-features = false, features = ["backend-cpal"] }
+ramod_runtime = { path = "../runtime", default-features = false, features = ["backend-cpal", "live-update"] }
 ramod_waveform = { path = "../waveform" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -36,3 +36,7 @@ path = "examples/load_bank.rs"
 [[example]]
 name = "load_fsb"
 path = "examples/load_fsb.rs"
+
+[[example]]
+name = "live_update"
+path = "examples/live_update.rs"
