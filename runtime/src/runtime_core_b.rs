@@ -79,10 +79,13 @@
             }
             if inst.is_3d {
                 let a = inst.attributes();
+                let listener = self.events.listener();
+                let d = crate::spatial::distance(&listener, &a);
+                let aud = inst.attenuation.gain_at(d) * inst.gain_user;
                 emitters.push(crate::profiler::EmitterDebug {
                     position: a.position,
                     velocity: a.velocity,
-                    audibility: 1.0,
+                    audibility: aud,
                 });
             }
         }
