@@ -207,7 +207,7 @@ impl Mixer {
             if *id == self.master_id.0 {
                 continue;
             }
-            let (parent, buf_copy, mute_solo) = {
+            let (parent, buf_copy, _silenced) = {
                 let Some(bus) = self.buses.get_mut(id) else {
                     continue;
                 };
@@ -229,7 +229,6 @@ impl Mixer {
                 bus.meter.update(&bus.buffer);
                 (bus.parent, bus.buffer.clone(), silenced)
             };
-            let _ = mute_solo;
             if let Some(pid) = parent {
                 if let Some(p) = self.buses.get_mut(&pid.0) {
                     let n = p.buffer.len().min(buf_copy.len());
@@ -308,6 +307,36 @@ impl SnapshotPlayer {
 
     pub fn clear(&mut self) {
         self.active = None;
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        self.snaps.iter().map(|s| s.name.clone()).collect()
+    }
+
+    pub fn active_name(&self) -> Option<&str> {
+        self.active.as_ref().map(|(n, _)| n.as_str())
+    }
+
+    pub fn active_weight(&self) -> f32 {
+        self.active.as_ref().map(|(_, w)| *w).unwrap_or(0.0)
+    }
+
+    pub fn base_volumes(&self) -> &HashMap<u32, f32> {
+        &self.base
+    }
+
+    /// Capture current mixer volumes as a named snapshot (replaces same name).
+    pub fn capture_named(&mut self, name: impl Into<String>, mixer: &Mixer) {
+        let name = name.into();
+        let mut snap = Snapshot::new(name.clone());
+        for b in mixer.buses() {
+            snap.set_volume(b.id, b.volume_db);
+        }
+        self.snaps.retain(|s| s.name != name);
+        self.snaps.push(snap);
+        if self.base.is_empty() {
+            self.capture_base(mixer);
+        }
     }
 
     pub fn apply(&self, mixer: &mut Mixer) {
