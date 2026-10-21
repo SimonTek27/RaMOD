@@ -181,6 +181,32 @@ impl Mixer {
         self.buses.get(&id.0).map(|b| b.inserts.len()).unwrap_or(0)
     }
 
+    pub fn list_inserts(&self, id: BusId) -> Vec<InsertEffect> {
+        self.buses
+            .get(&id.0)
+            .map(|b| b.inserts.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_insert(&mut self, id: BusId, index: usize, effect: InsertEffect) {
+        if let Some(b) = self.buses.get_mut(&id.0) {
+            if index < b.inserts.len() {
+                b.inserts[index] = effect;
+            }
+        }
+    }
+
+    pub fn remove_insert(&mut self, id: BusId, index: usize) {
+        if let Some(b) = self.buses.get_mut(&id.0) {
+            if index < b.inserts.len() {
+                b.inserts.remove(index);
+                if index < b.effect_state.len() {
+                    b.effect_state.remove(index);
+                }
+            }
+        }
+    }
+
     pub fn route_voice(&mut self, voice_id: u64, bus: BusId) {
         self.voice_route.insert(voice_id, bus);
     }
