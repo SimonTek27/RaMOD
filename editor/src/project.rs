@@ -1,4 +1,4 @@
-//! S3.1 / S5 — Project model: events, banks, assets, tracks, automation, markers.
+//! S3.1 / S5 / S7.15 — Project model: events, banks, assets, tracks, FX presets.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -11,6 +11,29 @@ pub struct Project {
     pub events: Vec<EventEntry>,
     pub banks: Vec<BankEntry>,
     pub assets: Vec<AssetEntry>,
+    /// Named bus FX chains (S7.15).
+    #[serde(default)]
+    pub fx_presets: Vec<FxPreset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FxPreset {
+    pub name: String,
+    #[serde(default)]
+    pub inserts: Vec<FxInsertSpec>,
+}
+
+/// One insert in a preset (bus by name + params).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FxInsertSpec {
+    pub bus: String,
+    pub kind: String,
+    #[serde(default)]
+    pub p0: f32,
+    #[serde(default)]
+    pub p1: f32,
+    #[serde(default)]
+    pub p2: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,10 +144,10 @@ pub struct AutomationEntry {
 }
 
 impl AutomationEntry {
-    pub fn intensity_fade(start: f32, end: f32, t_end: f32) -> Self {
+    pub fn intensity_fade(start: f32, end: f32, at: f32) -> Self {
         Self {
             parameter: "Intensity".into(),
-            keys: vec![(0.0, start), (t_end, end)],
+            keys: vec![(0.0, start), (at, end)],
         }
     }
 }
@@ -133,22 +156,8 @@ impl AutomationEntry {
 pub struct MarkerEntry {
     pub name: String,
     pub time: f32,
+    #[serde(default)]
     pub target_event: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BankManifestJson {
-    pub name: String,
-    pub events: Vec<EventManifestRow>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventManifestRow {
-    pub path: String,
-    pub asset: Option<String>,
-    pub looping: bool,
-    pub is_3d: bool,
-    pub priority: i32,
 }
 
 impl Default for Project {
@@ -202,17 +211,17 @@ impl Default for Project {
                     tracks: vec![TrackEntry {
                         name: "Audio 1".into(),
                         instruments: vec![InstrumentEntry {
-                            name: "beep_b".into(),
+                            name: "loop".into(),
                             asset_index: Some(0),
                             start_time: 0.0,
-                            length: 0.5,
+                            length: 1.0,
                             probability: 1.0,
-                            looping: false,
+                            looping: true,
                         }],
                         mute: false,
                         solo: false,
                     }],
-                    length: 3.0,
+                    length: 4.0,
                     automation: Vec::new(),
                     markers: Vec::new(),
                     output_bus: "SFX".into(),
@@ -226,6 +235,7 @@ impl Default for Project {
                 source_path: None,
                 demo_freq_hz: Some(440.0),
             }],
+            fx_presets: Vec::new(),
         }
     }
 }
@@ -236,67 +246,16 @@ impl Project {
         std::fs::write(path, json).map_err(|e| e.to_string())
     }
 
-    pub fn add_event(&mut self, path: String) {
-        self.events.push(EventEntry {
-            path,
-            bank: self
-                .banks
-                .first()
-                .map(|b| b.name.clone())
-                .unwrap_or_else(|| "Master".into()),
-            asset_index: self.assets.first().map(|_| 0),
-            looping: false,
-            is_3d: false,
-            priority: 128,
-            min_distance: 1.0,
-            max_distance: 50.0,
-            parameters: vec![("Intensity".into(), 1.0)],
-            tracks: vec![TrackEntry::new("Audio 1")],
-            length: 4.0,
-            automation: Vec::new(),
-            markers: Vec::new(),
-            output_bus: "SFX".into(),
-        });
-    }
-
-    pub fn add_track(&mut self, event_index: usize, name: String) -> Result<(), String> {
-        let e = self
-            .events
-            .get_mut(event_index)
-            .ok_or_else(|| "bad event".into())?;
-        e.tracks.push(TrackEntry::new(name));
-        Ok(())
-    }
-
-    pub fn add_instrument(
-        &mut self,
-        event_index: usize,
-        track_index: usize,
-        name: String,
-        asset_index: Option<usize>,
-    ) -> Result<(), String> {
-        let e = self
-            .events
-            .get_mut(event_index)
-            .ok_or_else(|| "bad event".into())?;
-        let t = e
-            .tracks
-            .get_mut(track_index)
-            .ok_or_else(|| "bad track".into())?;
-        t.instruments.push(InstrumentEntry {
-            name,
-            asset_index,
-            start_time: 0.0,
-            length: 0.5,
-            probability: 1.0,
-            looping: false,
-        });
-        Ok(())
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let data = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let mut p: Project = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+        p.path = Some(path.to_path_buf());
+        Ok(p)
     }
 
     pub fn add_asset_file(&mut self, path: &Path) -> usize {
         let name = path
-            .file_stem()
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("asset")
             .to_string();
@@ -308,48 +267,46 @@ impl Project {
         self.assets.len() - 1
     }
 
-    pub fn assign_asset_to_event(&mut self, event_index: usize, asset_index: usize) -> Result<(), String> {
-        let e = self
-            .events
-            .get_mut(event_index)
-            .ok_or_else(|| "bad event".into())?;
-        if asset_index >= self.assets.len() {
-            return Err("bad asset".into());
+    pub fn assign_asset_to_event(&mut self, event_i: usize, asset_i: usize) -> Result<(), String> {
+        if event_i >= self.events.len() {
+            return Err("invalid event".into());
         }
-        e.asset_index = Some(asset_index);
+        if asset_i >= self.assets.len() {
+            return Err("invalid asset".into());
+        }
+        self.events[event_i].asset_index = Some(asset_i);
+        if let Some(track) = self.events[event_i].tracks.first_mut() {
+            if let Some(inst) = track.instruments.first_mut() {
+                inst.asset_index = Some(asset_i);
+            }
+        }
         Ok(())
     }
 
-    pub fn export_bank_build(&self, bank_name: &str, out_dir: &Path) -> Result<PathBuf, String> {
-        let bank_dir = out_dir.join(bank_name);
-        let assets_dir = bank_dir.join("assets");
-        std::fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
-        let mut rows = Vec::new();
-        for ev in self.events.iter().filter(|e| e.bank == bank_name) {
-            let asset_name = ev
-                .asset_index
-                .and_then(|i| self.assets.get(i))
-                .map(|a| a.name.clone());
-            rows.push(EventManifestRow {
-                path: ev.path.clone(),
-                asset: asset_name,
-                looping: ev.looping,
-                is_3d: ev.is_3d,
-                priority: ev.priority,
-            });
-        }
-        let manifest = BankManifestJson {
-            name: bank_name.to_string(),
-            events: rows,
-        };
-        let manifest_path = bank_dir.join("bank.json");
+    pub fn export_bank_build(&self, bank: &str, out_dir: &Path) -> Result<PathBuf, String> {
+        let dir = out_dir.join(bank);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let events: Vec<_> = self
+            .events
+            .iter()
+            .filter(|e| e.bank == bank)
+            .map(|e| {
+                serde_json::json!({
+                    "path": e.path,
+                    "asset": e.asset_index.and_then(|i| self.assets.get(i).map(|a| a.name.clone())),
+                    "output_bus": e.output_bus,
+                    "is_3d": e.is_3d,
+                    "looping": e.looping,
+                })
+            })
+            .collect();
+        let manifest = serde_json::json!({
+            "bank": bank,
+            "events": events,
+        });
+        let path = dir.join("bank.json");
         let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
-        std::fs::write(&manifest_path, json).map_err(|e| e.to_string())?;
-        let _ = self.export_fsb_bank(bank_name, &bank_dir.join(format!("{bank_name}.fsb")));
-        Ok(manifest_path)
-    }
-
-    pub fn export_fsb_bank(&self, _bank_name: &str, _out_path: &Path) -> Result<usize, String> {
-        Ok(0)
+        std::fs::write(&path, json).map_err(|e| e.to_string())?;
+        Ok(path)
     }
 }
