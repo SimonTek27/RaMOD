@@ -266,6 +266,62 @@ pub fn show_event_editor(
         }
     }
 
+    ui.separator();
+    ui.label("Automation");
+    if let Some(e) = project.events.get_mut(event_index) {
+        if e.automation.is_empty() {
+            if ui.button("+ Intensity fade").clicked() {
+                e.automation.push(crate::project::AutomationEntry::intensity_fade(
+                    1.0,
+                    0.0,
+                    e.length.max(0.5),
+                ));
+                dirty = true;
+            }
+        } else {
+            for (ai, a) in e.automation.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(&a.parameter);
+                    if a.keys.len() >= 2 {
+                        let mut v0 = a.keys[0].1;
+                        let mut v1 = a.keys[a.keys.len() - 1].1;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut v0)
+                                    .speed(0.01)
+                                    .range(0.0..=2.0)
+                                    .prefix("0s "),
+                            )
+                            .changed()
+                        {
+                            a.keys[0].1 = v0;
+                            dirty = true;
+                        }
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut v1)
+                                    .speed(0.01)
+                                    .range(0.0..=2.0)
+                                    .prefix("end "),
+                            )
+                            .changed()
+                        {
+                            let last = a.keys.len() - 1;
+                            a.keys[last].1 = v1;
+                            dirty = true;
+                        }
+                    }
+                    if ui.small_button("x").clicked() {
+                        let _ = ai;
+                        a.keys.clear();
+                        dirty = true;
+                    }
+                });
+            }
+            e.automation.retain(|a| !a.keys.is_empty());
+        }
+    }
+
     if dirty {
         EventEditorAction::Changed
     } else {
