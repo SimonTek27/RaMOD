@@ -54,4 +54,5 @@ pub struct BusMeterInfo {
 #[cfg(feature = "live-update")]
 pub use live_update::{LiveUpdateClient, LiveUpdateServer};
 
-include!("runtime_core.rs");
+include!("runtime_core_a.rs");
+include!("runtime_core_b.rs");
