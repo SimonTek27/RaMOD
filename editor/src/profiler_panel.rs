@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, snapshots, 3D map).
+//! S7 — Editor Profiler panel (CPU, voices, buses, snapshots, interactive 3D map).
 
 use eframe::egui;
 
@@ -30,6 +30,8 @@ pub enum ProfilerAction {
     SaveSnapshot,
     TriggerSnapshot { name: String, weight: f32 },
     ClearSnapshot,
+    SetEmitterPos { x: f32, z: f32 },
+    SetListenerPos { x: f32, z: f32 },
 }
 
 impl ProfilerPanel {
@@ -221,7 +223,10 @@ impl ProfilerPanel {
 
         ui.separator();
         ui.label("3D emitters (XZ top-down)");
-        draw_emitter_map(ui, snap);
+        ui.weak("Drag orange = emitter · green L = listener · scale ±50m");
+        if let Some(a) = draw_emitter_map(ui, snap) {
+            action = a;
+        }
         if snap.emitters.is_empty() {
             ui.weak("No 3D instances — mark event as 3D and Play");
         } else {
@@ -299,9 +304,10 @@ fn draw_sparkline(ui: &mut egui::Ui, data: &[u32], color: egui::Color32, height:
     );
 }
 
-fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) {
+fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> Option<ProfilerAction> {
     let size = 140.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(22, 24, 28));
     let mid = rect.center();
@@ -315,6 +321,12 @@ fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) {
     );
     let scale = size / 100.0;
     let to_screen = |x: f32, z: f32| egui::pos2(mid.x + x * scale, mid.y - z * scale);
+    let to_world = |pos: egui::Pos2| {
+        let x = ((pos.x - mid.x) / scale).clamp(-50.0, 50.0);
+        let z = ((mid.y - pos.y) / scale).clamp(-50.0, 50.0);
+        (x, z)
+    };
+
     let (lx, _ly, lz) = snap.listener;
     let lp = to_screen(lx, lz);
     painter.circle_filled(lp, 5.0, egui::Color32::from_rgb(80, 200, 120));
@@ -342,4 +354,34 @@ fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) {
             ),
         );
     }
+
+    let mut action = None;
+    if response.dragged() {
+        if let Some(pointer) = response.interact_pointer_pos() {
+            let (wx, wz) = to_world(pointer);
+            let dist_l = pointer.distance(lp);
+            let mut nearest_emitter_d = f32::MAX;
+            for e in &snap.emitters {
+                let p = to_screen(e.position.x, e.position.z);
+                nearest_emitter_d = nearest_emitter_d.min(pointer.distance(p));
+            }
+            const HIT: f32 = 16.0;
+            if nearest_emitter_d < HIT && nearest_emitter_d <= dist_l {
+                action = Some(ProfilerAction::SetEmitterPos { x: wx, z: wz });
+            } else if dist_l < HIT {
+                action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+            } else if !snap.emitters.is_empty() {
+                action = Some(ProfilerAction::SetEmitterPos { x: wx, z: wz });
+            } else {
+                action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+            }
+        }
+    }
+    if response.double_clicked() {
+        if let Some(pointer) = response.interact_pointer_pos() {
+            let (wx, wz) = to_world(pointer);
+            action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz });
+        }
+    }
+    action
 }
