@@ -5,11 +5,13 @@ mod live_client;
 mod project;
 mod event_editor;
 mod waveform_panel;
+mod profiler_panel;
 
 use audio_bridge::AudioBridge;
 use eframe::egui;
 use event_editor::{ensure_default_track, show_event_editor, EventEditorAction, EventEditorState};
 use live_client::EditorLiveClient;
+use profiler_panel::{ProfilerAction, ProfilerPanel};
 use project::Project;
 use std::path::PathBuf;
 use waveform_panel::{WaveformAction, WaveformPanel};
@@ -56,6 +58,7 @@ struct RamodEditorApp {
     intensity: f32,
     live_client: Option<EditorLiveClient>,
     waveform: WaveformPanel,
+    profiler: ProfilerPanel,
     asset_import_path: String,
     event_editor: EventEditorState,
 }
@@ -83,6 +86,7 @@ impl RamodEditorApp {
             intensity: 1.0,
             live_client: None,
             waveform,
+            profiler: ProfilerPanel::default(),
             asset_import_path: String::new(),
             event_editor: EventEditorState::default(),
         }
@@ -295,6 +299,7 @@ impl eframe::App for RamodEditorApp {
                 });
                 ui.menu_button("Window", |ui| {
                     ui.checkbox(&mut self.waveform.show, "Waveform Editor");
+                    ui.checkbox(&mut self.profiler.show, "Profiler");
                 });
                 ui.label(format!("  {}", self.project.name));
             });
@@ -532,6 +537,28 @@ impl eframe::App for RamodEditorApp {
                     }
                 }
             });
+
+        if self.profiler.show {
+            egui::SidePanel::right("profiler")
+                .default_width(280.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    let snap = self
+                        .audio
+                        .as_ref()
+                        .map(|a| a.profiler_snapshot())
+                        .unwrap_or_default();
+                    match self.profiler.ui(ui, &snap) {
+                        ProfilerAction::Clear => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.profiler_clear();
+                            }
+                            self.status_msg = "Profiler cleared".into();
+                        }
+                        ProfilerAction::None => {}
+                    }
+                });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(ei) = self.selected_event {
