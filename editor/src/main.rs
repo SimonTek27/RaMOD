@@ -182,7 +182,7 @@ impl RamodEditorApp {
                 let fsb_note = if fsb.exists() {
                     format!(" + {}", fsb.display())
                 } else {
-                    " (FSB skipped — restore parser / add file assets)".into()
+                    " (FSB skipped)".into()
                 };
                 self.status_msg = format!("Built {}{}", path.display(), fsb_note);
             }
@@ -233,10 +233,7 @@ impl RamodEditorApp {
                 .unwrap_or("")
                 .to_ascii_lowercase();
             if !ramod_waveform::is_supported_extension(&ext) {
-                self.status_msg = format!(
-                    "Unsupported drop: {} (wav/mp3/ogg/flac)",
-                    path.display()
-                );
+                self.status_msg = format!("Unsupported drop: {}", path.display());
                 continue;
             }
             if self.waveform.import_wav(&path) {
@@ -257,32 +254,6 @@ impl RamodEditorApp {
 impl eframe::App for RamodEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_file_drops(ctx);
-
-        if self.drop_hover_hint(ctx) {
-            egui::Area::new(egui::Id::new("drop_overlay"))
-                .fixed_pos(egui::pos2(0.0, 0.0))
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    let screen = ctx.screen_rect();
-                    ui.allocate_ui_at_rect(screen, |ui| {
-                        let (rect, _) =
-                            ui.allocate_exact_size(screen.size(), egui::Sense::hover());
-                        let painter = ui.painter();
-                        painter.rect_filled(
-                            rect,
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(20, 40, 80, 160),
-                        );
-                        painter.text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Drop WAV / MP3 / OGG / FLAC to import",
-                            egui::FontId::proportional(28.0),
-                            egui::Color32::WHITE,
-                        );
-                    });
-                });
-        }
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -322,11 +293,6 @@ impl eframe::App for RamodEditorApp {
                     if let Some(a) = self.audio.as_mut() {
                         a.set_parameter("Intensity", self.intensity);
                     }
-                    if let (Some(c), Some(path)) =
-                        (self.live_client.as_mut(), self.selected_path())
-                    {
-                        let _ = c.set_param(path, "Intensity", self.intensity);
-                    }
                 }
                 ui.separator();
                 let (peak, rms) = self
@@ -335,29 +301,6 @@ impl eframe::App for RamodEditorApp {
                     .map(|a| a.master_levels())
                     .unwrap_or((0.0, 0.0));
                 ui.label(format!("Peak {peak:.2}  RMS {rms:.2}"));
-                let meter_w = 80.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(meter_w, 14.0), egui::Sense::hover());
-                let painter = ui.painter();
-                painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(30, 30, 30));
-                let fill = (peak.clamp(0.0, 1.0)) * meter_w;
-                if fill > 0.5 {
-                    painter.rect_filled(
-                        egui::Rect::from_min_size(rect.min, egui::vec2(fill, 14.0)),
-                        2.0,
-                        if peak > 0.9 {
-                            egui::Color32::from_rgb(220, 60, 60)
-                        } else {
-                            egui::Color32::from_rgb(60, 180, 90)
-                        },
-                    );
-                }
-                if let Some(a) = self.audio.as_ref() {
-                    let marks = a.last_fired_markers();
-                    if let Some(last) = marks.last() {
-                        ui.label(format!("marker: {last}"));
-                    }
-                }
             });
         });
 
@@ -393,7 +336,6 @@ impl eframe::App for RamodEditorApp {
                                 a.stop();
                             }
                             self.transport = TransportState::Stopped;
-                            self.status_msg = "Preview stopped".into();
                         }
                         WaveformAction::None => {}
                     }
@@ -401,33 +343,7 @@ impl eframe::App for RamodEditorApp {
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let live = if self.live_update {
-                    "Live Update On"
-                } else {
-                    "Live Update Off"
-                };
-                if ui.selectable_label(self.live_update, live).clicked() {
-                    if self.live_update {
-                        self.live_client = None;
-                        self.live_update = false;
-                        self.status_msg = "Live Update Off".into();
-                    } else {
-                        match EditorLiveClient::connect(None) {
-                            Ok(c) => {
-                                self.live_client = Some(c);
-                                self.live_update = true;
-                                self.status_msg = "Live Update On".into();
-                            }
-                            Err(err) => {
-                                self.status_msg = format!("Live Update failed: {err}");
-                            }
-                        }
-                    }
-                }
-                ui.separator();
-                ui.label(&self.status_msg);
-            });
+            ui.label(&self.status_msg);
         });
 
         egui::SidePanel::left("browser")
@@ -450,25 +366,9 @@ impl eframe::App for RamodEditorApp {
                 ui.separator();
                 match self.browser_tab {
                     BrowserTab::Events => {
-                        if ui.button("Assign selected asset → event").clicked() {
-                            self.assign_selected_asset_to_event();
-                        }
-                        if ui.button("+ Event").clicked() {
-                            self.project.add_event(format!(
-                                "event:/sfx/new_{}",
-                                self.project.events.len()
-                            ));
-                        }
-                        ui.separator();
                         for (i, ev) in self.project.events.iter().enumerate() {
-                            let asset_label = ev
-                                .asset_index
-                                .and_then(|ai| self.project.assets.get(ai))
-                                .map(|a| a.name.as_str())
-                                .unwrap_or("—");
-                            let label = format!("{}  [{}]", ev.path, asset_label);
                             if ui
-                                .selectable_label(self.selected_event == Some(i), label)
+                                .selectable_label(self.selected_event == Some(i), &ev.path)
                                 .clicked()
                             {
                                 self.selected_event = Some(i);
@@ -476,62 +376,17 @@ impl eframe::App for RamodEditorApp {
                         }
                     }
                     BrowserTab::Banks => {
-                        if ui.button("Build bank").clicked() {
-                            self.build_bank();
-                        }
-                        ui.separator();
                         for b in &self.project.banks {
                             ui.label(&b.name);
-                            let n = self
-                                .project
-                                .events
-                                .iter()
-                                .filter(|e| e.bank == b.name)
-                                .count();
-                            ui.weak(format!("  {n} events"));
                         }
                     }
                     BrowserTab::Assets => {
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.asset_import_path)
-                                    .desired_width(160.0)
-                                    .hint_text("file.wav / .mp3 / .ogg"),
-                            );
-                            if ui.button("Import").clicked() {
-                                let p = PathBuf::from(self.asset_import_path.trim());
-                                if p.exists() {
-                                    if self.waveform.import_wav(&p) {
-                                        self.register_asset(p);
-                                        self.waveform.show = true;
-                                    } else {
-                                        self.status_msg = self.waveform.status.clone();
-                                    }
-                                } else {
-                                    self.status_msg = format!("Not found: {}", p.display());
-                                }
-                            }
-                        });
-                        ui.label("or drag & drop wav/mp3/ogg/flac");
-                        ui.separator();
                         for (i, a) in self.project.assets.iter().enumerate() {
-                            let label = if let Some(ref sp) = a.source_path {
-                                format!("{} ({})", a.name, sp)
-                            } else if let Some(f) = a.demo_freq_hz {
-                                format!("{} (demo {} Hz)", a.name, f)
-                            } else {
-                                a.name.clone()
-                            };
                             if ui
-                                .selectable_label(self.selected_asset == Some(i), label)
+                                .selectable_label(self.selected_asset == Some(i), &a.name)
                                 .clicked()
                             {
                                 self.selected_asset = Some(i);
-                            }
-                            if self.selected_asset == Some(i)
-                                && ui.small_button("Open in Waveform").clicked()
-                            {
-                                self.open_asset_in_waveform(i);
                             }
                         }
                     }
@@ -561,9 +416,8 @@ impl eframe::App for RamodEditorApp {
                                 let path = PathBuf::from("profiler_session.ndjson");
                                 match std::fs::write(&path, &ndjson) {
                                     Ok(()) => {
-                                        let lines = ndjson.lines().count();
                                         self.status_msg = format!(
-                                            "Exported {lines} frames → {}",
+                                            "Exported → {}",
                                             path.display()
                                         );
                                     }
@@ -588,6 +442,32 @@ impl eframe::App for RamodEditorApp {
                                 a.set_bus_volume_db(id, db);
                             }
                         }
+                        ProfilerAction::CaptureBase => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.capture_snapshot_base();
+                            }
+                            self.status_msg = "Snapshot base captured".into();
+                        }
+                        ProfilerAction::SaveSnapshot => {
+                            let name = self.profiler.snap_name.clone();
+                            if let Some(a) = self.audio.as_mut() {
+                                a.capture_named_snapshot(&name);
+                            }
+                            self.status_msg = format!("Snapshot saved: {name}");
+                        }
+                        ProfilerAction::TriggerSnapshot { name, weight } => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.trigger_snapshot(&name, weight);
+                            }
+                            self.status_msg =
+                                format!("Snapshot '{name}' @ {:.0}%", weight * 100.0);
+                        }
+                        ProfilerAction::ClearSnapshot => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.clear_snapshot();
+                            }
+                            self.status_msg = "Snapshot cleared (base restored)".into();
+                        }
                         ProfilerAction::None => {}
                     }
                 });
@@ -609,7 +489,6 @@ impl eframe::App for RamodEditorApp {
                 }
             } else {
                 ui.heading("Overview");
-                ui.weak("Select an event — multi-track timeline appears here");
             }
         });
 
