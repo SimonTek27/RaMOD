@@ -1,34 +1,27 @@
-//! Event Designer data model (S5) — tracks, instruments, markers.
+//! Multi-track designed events (FMOD Studio-style).
 
 use crate::automation::AutomationCurve;
 use crate::envelope::Ahdsr;
 use crate::spatial::Attenuation;
 
-/// How an instrument picks samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentKind {
-    /// One buffer.
     Single,
-    /// Round-robin / random among entries.
     Multi,
-    /// Play N voices at once with scatter.
     Scatter,
 }
 
-/// One playable instrument on a track.
 #[derive(Debug, Clone)]
 pub struct InstrumentDef {
     pub name: String,
     pub kind: InstrumentKind,
-    /// Buffer indices into the event's buffer list (resolved at register time).
     pub buffer_slots: Vec<usize>,
     pub start_time: f32,
     pub length: f32,
     pub probability: f32,
     pub looping: bool,
+    pub scatter_count: usize,
     pub envelope: Ahdsr,
-    /// Scatter: number of voices.
-    pub scatter_count: u32,
 }
 
 impl InstrumentDef {
@@ -38,16 +31,15 @@ impl InstrumentDef {
             kind: InstrumentKind::Single,
             buffer_slots: vec![slot],
             start_time: 0.0,
-            length: 2.0,
+            length: 0.0,
             probability: 1.0,
             looping: false,
-            envelope: Ahdsr::default(),
             scatter_count: 1,
+            envelope: Ahdsr::default(),
         }
     }
 }
 
-/// One timeline track.
 #[derive(Debug, Clone)]
 pub struct TimelineTrack {
     pub name: String,
@@ -67,7 +59,12 @@ impl TimelineTrack {
     }
 }
 
-/// Transition marker for adaptive music (S5.6).
+#[derive(Debug, Clone)]
+pub struct LoopRegion {
+    pub start: f32,
+    pub end: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct TransitionMarker {
     pub name: String,
@@ -75,7 +72,6 @@ pub struct TransitionMarker {
     pub target_event: Option<String>,
 }
 
-/// Full designed event (multi-track).
 #[derive(Debug, Clone)]
 pub struct DesignedEvent {
     pub path: String,
@@ -86,8 +82,8 @@ pub struct DesignedEvent {
     pub attenuation: Attenuation,
     pub priority: i32,
     pub length: f32,
-    /// Parameter defaults.
     pub parameters: Vec<(String, f32)>,
+    pub output_bus: String,
 }
 
 impl DesignedEvent {
@@ -102,6 +98,7 @@ impl DesignedEvent {
             priority: 128,
             length: 4.0,
             parameters: vec![("Intensity".into(), 1.0)],
+            output_bus: "SFX".into(),
         }
     }
 
@@ -109,11 +106,4 @@ impl DesignedEvent {
         self.tracks.push(track);
         self
     }
-}
-
-/// Loop region on the timeline (S5.4).
-#[derive(Debug, Clone, Copy)]
-pub struct LoopRegion {
-    pub start: f32,
-    pub end: f32,
 }
