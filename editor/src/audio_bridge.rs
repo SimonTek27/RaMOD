@@ -350,19 +350,21 @@ impl AudioBridge {
         self.rt.active_snapshot()
     }
 
-    pub fn set_emitter_xz(&mut self, x: f32, z: f32) {
+    pub fn set_emitter_xz(&mut self, x: f32, z: f32, vx: f32, vz: f32) {
         let Some(id) = self.playing_id else {
             return;
         };
         let mut attrs = Attributes3d::default();
         attrs.position = Vec3::new(x, 0.0, z);
+        attrs.velocity = Vec3::new(vx, 0.0, vz);
         self.rt.set_instance_3d(id, attrs);
     }
 
-    pub fn set_listener_xz(&mut self, x: f32, z: f32) {
+    pub fn set_listener_xz(&mut self, x: f32, z: f32, vx: f32, vz: f32) {
         let mut a = self.rt.listener();
         a.position.x = x;
         a.position.z = z;
+        a.velocity = Vec3::new(vx, 0.0, vz);
         self.rt.set_listener(a);
     }
 
@@ -422,7 +424,6 @@ pub struct ProfilerSnapshot {
     pub bus_inserts: Vec<BusInsertInfo>,
 }
 
-/// Editable insert row for the profiler.
 #[derive(Debug, Clone)]
 pub struct BusInsertInfo {
     pub bus_id: u32,
