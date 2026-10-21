@@ -223,6 +223,48 @@ impl AudioBridge {
     pub fn set_transition_fade(&mut self, secs: f32) {
         self.rt.set_transition_fade(secs);
     }
+
+    pub fn profiler_snapshot(&self) -> ProfilerSnapshot {
+        let frame = self.rt.profiler_latest();
+        let (peak, rms) = self.rt.master_levels();
+        ProfilerSnapshot {
+            cpu_render_us: frame
+                .map(|f| f.cpu_render_us)
+                .unwrap_or(self.rt.last_render_cpu_us()),
+            active_voices: frame
+                .map(|f| f.active_voices)
+                .unwrap_or_else(|| self.rt.active_voices()),
+            active_instances: frame
+                .map(|f| f.active_instances)
+                .unwrap_or_else(|| self.rt.instance_count()),
+            master_peak: frame.map(|f| f.master_peak).unwrap_or(peak),
+            master_rms: frame.map(|f| f.master_rms).unwrap_or(rms),
+            playing_events: frame.map(|f| f.playing_events.clone()).unwrap_or_default(),
+            spectrum_bands: self.rt.spectrum().levels.clone(),
+            session_frames: self.rt.profiler_session().len(),
+            avg_cpu_us: self.rt.profiler_session().avg_cpu_us(),
+            peak_voices: self.rt.profiler_session().peak_voices(),
+        }
+    }
+
+    pub fn profiler_clear(&mut self) {
+        self.rt.profiler_clear();
+    }
+}
+
+/// Lightweight view for the editor Profiler panel.
+#[derive(Debug, Clone, Default)]
+pub struct ProfilerSnapshot {
+    pub cpu_render_us: u32,
+    pub active_voices: usize,
+    pub active_instances: usize,
+    pub master_peak: f32,
+    pub master_rms: f32,
+    pub playing_events: Vec<String>,
+    pub spectrum_bands: Vec<f32>,
+    pub session_frames: usize,
+    pub avg_cpu_us: f32,
+    pub peak_voices: usize,
 }
 
 struct ResolvedPcm {
