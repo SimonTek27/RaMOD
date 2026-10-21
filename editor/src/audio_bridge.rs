@@ -399,6 +399,49 @@ impl AudioBridge {
     pub fn remove_bus_insert(&mut self, bus_id: u32, index: usize) {
         self.rt.remove_bus_insert(BusId(bus_id), index);
     }
+
+    pub fn capture_fx_chain(&self) -> Vec<crate::project::FxInsertSpec> {
+        let mut out = Vec::new();
+        for b in self.rt.list_bus_meters() {
+            for fx in self.rt.list_bus_inserts(BusId(b.id)) {
+                let info = BusInsertInfo::from_effect(b.id, 0, &fx);
+                out.push(crate::project::FxInsertSpec {
+                    bus: b.name.clone(),
+                    kind: info.kind,
+                    p0: info.p0,
+                    p1: info.p1,
+                    p2: info.p2,
+                });
+            }
+        }
+        out
+    }
+
+    pub fn apply_fx_chain(&mut self, inserts: &[crate::project::FxInsertSpec]) {
+        for b in self.rt.list_bus_meters() {
+            self.rt.clear_bus_inserts(BusId(b.id));
+        }
+        for spec in inserts {
+            let bus_id = self
+                .rt
+                .list_bus_meters()
+                .iter()
+                .find(|b| b.name.eq_ignore_ascii_case(&spec.bus))
+                .map(|b| b.id);
+            let Some(id) = bus_id else {
+                continue;
+            };
+            let info = BusInsertInfo {
+                bus_id: id,
+                index: 0,
+                kind: spec.kind.clone(),
+                p0: spec.p0,
+                p1: spec.p1,
+                p2: spec.p2,
+            };
+            self.rt.add_bus_insert(BusId(id), info.to_effect());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -492,9 +535,7 @@ impl BusInsertInfo {
         match self.kind.as_str() {
             "Gain" => InsertEffect::gain(self.p0),
             "HighPass" => InsertEffect::highpass(self.p0.max(20.0)),
-            "Compressor" => {
-                InsertEffect::compressor(self.p0, self.p1.max(1.0), self.p2)
-            }
+            "Compressor" => InsertEffect::compressor(self.p0, self.p1.max(1.0), self.p2),
             "Reverb" => InsertEffect::reverb(
                 self.p0.max(1.0),
                 self.p1.clamp(0.0, 0.95),
