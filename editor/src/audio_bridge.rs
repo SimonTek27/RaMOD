@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, AutomationCurve, DesignedEvent, EventDescription, InstrumentDef, PlayParams,
-    Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
+    Attenuation, AutomationCurve, BusMeterInfo, DesignedEvent, EventDescription, InstrumentDef,
+    PlayParams, Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -244,6 +244,7 @@ impl AudioBridge {
             session_frames: self.rt.profiler_session().len(),
             avg_cpu_us: self.rt.profiler_session().avg_cpu_us(),
             peak_voices: self.rt.profiler_session().peak_voices(),
+            bus_meters: self.rt.list_bus_meters(),
         }
     }
 
@@ -268,6 +269,7 @@ pub struct ProfilerSnapshot {
     pub session_frames: usize,
     pub avg_cpu_us: f32,
     pub peak_voices: usize,
+    pub bus_meters: Vec<BusMeterInfo>,
 }
 
 struct ResolvedPcm {
