@@ -133,6 +133,7 @@ pub struct Runtime {
     last_render_us: u32,
     next_voice_id: AtomicU64,
     backend: Option<Box<dyn OutputBackend>>,
+    current_output_bus: Option<BusId>,
 }
 
 impl Runtime {
@@ -172,15 +173,28 @@ impl Runtime {
             sample_rate,
             channels,
             backend,
+            current_output_bus: None,
         })
     }
 
-    pub fn sample_rate(&self) -> u32 { self.sample_rate }
-    pub fn channels(&self) -> u16 { self.channels }
-    pub fn master(&self) -> &MasterBus { &self.master }
-    pub fn master_mut(&mut self) -> &mut MasterBus { &mut self.master }
-    pub fn mixer(&self) -> &Mixer { &self.mixer }
-    pub fn mixer_mut(&mut self) -> &mut Mixer { &mut self.mixer }
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+    pub fn master(&self) -> &MasterBus {
+        &self.master
+    }
+    pub fn master_mut(&mut self) -> &mut MasterBus {
+        &mut self.master
+    }
+    pub fn mixer(&self) -> &Mixer {
+        &self.mixer
+    }
+    pub fn mixer_mut(&mut self) -> &mut Mixer {
+        &mut self.mixer
+    }
 
     pub fn load_pcm(
         &mut self,
@@ -194,7 +208,11 @@ impl Runtime {
         if samples.len() % channels as usize != 0 {
             return Err(RuntimeError::InvalidBuffer);
         }
-        Ok(self.buffers.insert(PcmBuffer { samples, channels, sample_rate }))
+        Ok(self.buffers.insert(PcmBuffer {
+            samples,
+            channels,
+            sample_rate,
+        }))
     }
 
     pub fn play(
@@ -222,17 +240,33 @@ impl Runtime {
         let id = self.next_voice_id.fetch_add(1, Ordering::Relaxed);
         let handle = self
             .voices
-            .start(id, buffer, buf, params, self.sample_rate, priority, audibility, envelope)
+            .start(
+                id,
+                buffer,
+                buf,
+                params,
+                self.sample_rate,
+                priority,
+                audibility,
+                envelope,
+            )
             .map_err(|_| RuntimeError::NoFreeVoice)?;
-        self.mixer.route_voice(id, self.mixer.default_bus());
+        let bus = self
+            .current_output_bus
+            .unwrap_or_else(|| self.mixer.default_bus());
+        self.mixer.route_voice(id, bus);
         Ok(handle)
     }
 
-    pub fn stop(&mut self, voice: VoiceHandle) { self.voices.stop(voice); }
+    pub fn stop(&mut self, voice: VoiceHandle) {
+        self.voices.stop(voice);
+    }
     pub fn set_voice_gain(&mut self, voice: VoiceHandle, gain: f32) {
         self.voices.set_gain(voice, gain.max(0.0));
     }
-    pub fn active_voices(&self) -> usize { self.voices.active_count() }
+    pub fn active_voices(&self) -> usize {
+        self.voices.active_count()
+    }
 
     pub fn tick(&mut self, dt: f32) {
         let mut still = Vec::new();
@@ -365,12 +399,15 @@ impl Runtime {
             return;
         }
         let frames = out.len() / ch;
-        let mut dry = vec![0.0f32; frames * ch];
-        self.voices
-            .mix_into(&mut dry, frames, ch, self.sample_rate, &self.buffers);
         self.mixer.prepare(frames, ch);
-        self.mixer.route_voice(0, self.mixer.default_bus());
-        self.mixer.accumulate_voice(0, &dry);
+        {
+            let mixer = &mut self.mixer;
+            let rate = self.sample_rate;
+            let buffers = &self.buffers;
+            self.voices.mix_each(frames, ch, rate, buffers, |voice_id, slice| {
+                mixer.accumulate_voice(voice_id, slice);
+            });
+        }
         self.mixer.finish(out, ch, self.sample_rate);
         let g = self.master.gain();
         if (g - 1.0).abs() > f32::EPSILON {
@@ -386,23 +423,45 @@ impl Runtime {
         }
     }
 
-    pub fn profiler_enable(&mut self, on: bool) { self.profiler.enable(on); }
-    pub fn profiler_clear(&mut self) { self.profiler.clear(); }
-    pub fn profiler_session(&self) -> &crate::profiler::ProfilerSession { &self.profiler }
-    pub fn profiler_latest(&self) -> Option<&crate::profiler::ProfilerFrame> { self.profiler.latest() }
-    pub fn spectrum(&self) -> &crate::profiler::SpectrumAnalyzer { &self.spectrum }
-    pub fn last_render_cpu_us(&self) -> u32 { self.last_render_us }
+    pub fn profiler_enable(&mut self, on: bool) {
+        self.profiler.enable(on);
+    }
+    pub fn profiler_clear(&mut self) {
+        self.profiler.clear();
+    }
+    pub fn profiler_session(&self) -> &crate::profiler::ProfilerSession {
+        &self.profiler
+    }
+    pub fn profiler_latest(&self) -> Option<&crate::profiler::ProfilerFrame> {
+        self.profiler.latest()
+    }
+    pub fn spectrum(&self) -> &crate::profiler::SpectrumAnalyzer {
+        &self.spectrum
+    }
+    pub fn last_render_cpu_us(&self) -> u32 {
+        self.last_render_us
+    }
 
     fn capture_profiler_frame(&mut self) {
-        if !self.profiler.is_enabled() { return; }
+        if !self.profiler.is_enabled() {
+            return;
+        }
         let master = self.mixer.master_id();
-        let (peak, rms) = self.mixer.bus(master).map(|b| (b.meter.peak, b.meter.rms)).unwrap_or((0.0, 0.0));
+        let (peak, rms) = self
+            .mixer
+            .bus(master)
+            .map(|b| (b.meter.peak, b.meter.rms))
+            .unwrap_or((0.0, 0.0));
         let mut playing_events = Vec::new();
         let mut params = Vec::new();
         let mut emitters = Vec::new();
         for id in 1..1024u64 {
-            let Some(inst) = self.events.instance(id) else { continue };
-            if !inst.is_playing() { continue; }
+            let Some(inst) = self.events.instance(id) else {
+                continue;
+            };
+            if !inst.is_playing() {
+                continue;
+            }
             let path = inst.path().as_str().to_string();
             playing_events.push(path.clone());
             if let Some(v) = inst.get_parameter("Intensity") {
@@ -417,7 +476,9 @@ impl Runtime {
                 });
             }
         }
-        if playing_events.len() > 16 { playing_events.truncate(16); }
+        if playing_events.len() > 16 {
+            playing_events.truncate(16);
+        }
         self.profiler.push(crate::profiler::ProfilerFrame {
             index: 0,
             time: 0.0,
@@ -458,7 +519,14 @@ impl Runtime {
             .ok_or(RuntimeError::InvalidBuffer)?;
         let mut desc = EventDescription::new(&event.path, primary)
             .with_priority(event.priority)
-            .with_loop(event.tracks.iter().flat_map(|t| t.instruments.iter()).any(|i| i.looping));
+            .with_loop(
+                event
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.instruments.iter())
+                    .any(|i| i.looping),
+            )
+            .with_output_bus(event.output_bus.clone());
         if event.is_3d {
             desc = desc.with_3d(event.attenuation);
         }
@@ -466,7 +534,8 @@ impl Runtime {
             desc = desc.with_parameter(n.clone(), *v);
         }
         self.events.register(desc);
-        self.designed_buffers.insert(event.path.clone(), buffers.to_vec());
+        self.designed_buffers
+            .insert(event.path.clone(), buffers.to_vec());
         self.designed.push(event);
         Ok(())
     }
@@ -485,17 +554,25 @@ impl Runtime {
         let any_solo = event.tracks.iter().any(|t| t.solo);
         let mut handles = Vec::new();
         for track in &event.tracks {
-            if track.mute { continue; }
-            if any_solo && !track.solo { continue; }
+            if track.mute {
+                continue;
+            }
+            if any_solo && !track.solo {
+                continue;
+            }
             for inst in &track.instruments {
                 let roll = simple_hash(&format!("{}:{}", path, inst.name)) as f32 / u64::MAX as f32;
-                if roll > inst.probability.clamp(0.0, 1.0) { continue; }
+                if roll > inst.probability.clamp(0.0, 1.0) {
+                    continue;
+                }
                 let count = match inst.kind {
                     designer::InstrumentKind::Scatter => inst.scatter_count.max(1),
                     _ => 1,
                 };
                 for n in 0..count {
-                    if inst.buffer_slots.is_empty() { continue; }
+                    if inst.buffer_slots.is_empty() {
+                        continue;
+                    }
                     let slot = if inst.kind == designer::InstrumentKind::Multi {
                         let idx = (simple_hash(&(inst.name.clone() + &n.to_string())) as usize)
                             % inst.buffer_slots.len();
@@ -503,10 +580,21 @@ impl Runtime {
                     } else {
                         inst.buffer_slots[0]
                     };
-                    let Some(&buf) = buffers.get(slot) else { continue };
-                    let params = PlayParams { gain: 1.0, looped: inst.looping };
+                    let Some(&buf) = buffers.get(slot) else {
+                        continue;
+                    };
+                    let params = PlayParams {
+                        gain: 1.0,
+                        looped: inst.looping,
+                    };
                     if inst.start_time <= 0.001 {
-                        match self.play_with_priority(buf, params, event.priority, 1.0, Some(inst.envelope)) {
+                        match self.play_with_priority(
+                            buf,
+                            params,
+                            event.priority,
+                            1.0,
+                            Some(inst.envelope),
+                        ) {
                             Ok(h) => handles.push(h),
                             Err(_) => break,
                         }
@@ -526,7 +614,10 @@ impl Runtime {
         Ok(handles)
     }
 
-    pub fn play_designed_registered(&mut self, path: &str) -> Result<Vec<VoiceHandle>, RuntimeError> {
+    pub fn play_designed_registered(
+        &mut self,
+        path: &str,
+    ) -> Result<Vec<VoiceHandle>, RuntimeError> {
         let buffers = self
             .designed_buffers
             .get(path)
@@ -535,7 +626,9 @@ impl Runtime {
         self.play_designed(path, &buffers)
     }
 
-    pub fn designed_events(&self) -> &[DesignedEvent] { &self.designed }
+    pub fn designed_events(&self) -> &[DesignedEvent] {
+        &self.designed
+    }
     pub fn export_bank_manifest(&self, name: &str) -> BankManifest {
         BankManifest::from_events(name, &self.designed)
     }
@@ -547,12 +640,21 @@ impl Runtime {
         self.banks.insert(bank);
     }
 
-    pub fn set_listener(&mut self, attributes: Attr3d) { self.events.set_listener(attributes); }
-    pub fn listener(&self) -> Attr3d { self.events.listener() }
+    pub fn set_listener(&mut self, attributes: Attr3d) {
+        self.events.set_listener(attributes);
+    }
+    pub fn listener(&self) -> Attr3d {
+        self.events.listener()
+    }
 
     pub fn create_instance(&mut self, path: &str) -> Result<EventInstance, RuntimeError> {
-        let id = self.events.create_instance(path).ok_or(RuntimeError::EventNotFound)?;
-        self.events.release_instance(id).ok_or(RuntimeError::InvalidHandle)
+        let id = self
+            .events
+            .create_instance(path)
+            .ok_or(RuntimeError::EventNotFound)?;
+        self.events
+            .release_instance(id)
+            .ok_or(RuntimeError::InvalidHandle)
     }
 
     pub fn start_instance(&mut self, mut inst: EventInstance) -> Result<u64, RuntimeError> {
@@ -572,6 +674,9 @@ impl Runtime {
 
     pub fn play_event(&mut self, path: &str) -> Result<u64, RuntimeError> {
         if self.designed.iter().any(|e| e.path == path) {
+            if let Some(ev) = self.designed.iter().find(|e| e.path == path) {
+                self.current_output_bus = self.mixer.find_by_name(&ev.output_bus);
+            }
             let mut handles = self.play_designed_registered(path)?;
             let mut inst = self.create_instance(path)?;
             inst.started = true;
@@ -591,6 +696,9 @@ impl Runtime {
             self.events.instances_reinsert(inst);
             return Ok(id);
         }
+        if let Some(desc) = self.events.get_description(path) {
+            self.current_output_bus = self.mixer.find_by_name(&desc.output_bus);
+        }
         let inst = self.create_instance(path)?;
         self.start_instance(inst)
     }
@@ -602,7 +710,11 @@ impl Runtime {
             }
             inst.started = false;
         }
-        if let Some(pos) = self.designed_playbacks.iter().position(|p| p.instance_id == id) {
+        if let Some(pos) = self
+            .designed_playbacks
+            .iter()
+            .position(|p| p.instance_id == id)
+        {
             let pb = self.designed_playbacks.remove(pos);
             for v in pb.voices {
                 self.voices.stop(v);
@@ -611,11 +723,15 @@ impl Runtime {
         self.scheduled.retain(|s| s.instance_id != Some(id));
     }
 
-    pub fn clear_scheduled(&mut self) { self.scheduled.clear(); }
+    pub fn clear_scheduled(&mut self) {
+        self.scheduled.clear();
+    }
 
     pub fn master_levels(&self) -> (f32, f32) {
         let id = self.mixer.master_id();
-        self.bus_meter(id).map(|m| (m.peak, m.rms)).unwrap_or((0.0, 0.0))
+        self.bus_meter(id)
+            .map(|m| (m.peak, m.rms))
+            .unwrap_or((0.0, 0.0))
     }
 
     pub fn last_fired_markers(&self) -> Vec<String> {
@@ -644,7 +760,10 @@ impl Runtime {
     }
 
     pub fn set_instance_parameter(&mut self, id: u64, name: &str, value: f32) -> bool {
-        self.events.instance_mut(id).map(|i| i.set_parameter(name, value)).unwrap_or(false)
+        self.events
+            .instance_mut(id)
+            .map(|i| i.set_parameter(name, value))
+            .unwrap_or(false)
     }
 
     pub fn set_instance_3d(&mut self, id: u64, attributes: Attr3d) {
@@ -653,21 +772,39 @@ impl Runtime {
         }
     }
 
-    pub fn instance_count(&self) -> usize { self.events.instance_count() }
+    pub fn instance_count(&self) -> usize {
+        self.events.instance_count()
+    }
 
-    pub fn set_bus_volume_db(&mut self, bus: BusId, db: f32) { self.mixer.set_volume_db(bus, db); }
-    pub fn set_bus_mute(&mut self, bus: BusId, mute: bool) { self.mixer.set_mute(bus, mute); }
-    pub fn set_bus_solo(&mut self, bus: BusId, solo: bool) { self.mixer.set_solo(bus, solo); }
-    pub fn add_bus_insert(&mut self, bus: BusId, effect: InsertEffect) { self.mixer.add_insert(bus, effect); }
+    pub fn set_bus_volume_db(&mut self, bus: BusId, db: f32) {
+        self.mixer.set_volume_db(bus, db);
+    }
+    pub fn set_bus_mute(&mut self, bus: BusId, mute: bool) {
+        self.mixer.set_mute(bus, mute);
+    }
+    pub fn set_bus_solo(&mut self, bus: BusId, solo: bool) {
+        self.mixer.set_solo(bus, solo);
+    }
+    pub fn add_bus_insert(&mut self, bus: BusId, effect: InsertEffect) {
+        self.mixer.add_insert(bus, effect);
+    }
 
-    pub fn register_snapshot(&mut self, snapshot: Snapshot) { self.snapshots.add(snapshot); }
-    pub fn capture_snapshot_base(&mut self) { self.snapshots.capture_base(&self.mixer); }
+    pub fn register_snapshot(&mut self, snapshot: Snapshot) {
+        self.snapshots.add(snapshot);
+    }
+    pub fn capture_snapshot_base(&mut self) {
+        self.snapshots.capture_base(&self.mixer);
+    }
     pub fn trigger_snapshot(&mut self, name: &str, weight: f32) {
         self.snapshots.trigger(name, weight);
         self.snapshots.apply(&mut self.mixer);
     }
-    pub fn clear_snapshot(&mut self) { self.snapshots.clear(); }
-    pub fn bus_meter(&self, bus: BusId) -> Option<Meter> { self.mixer.bus(bus).map(|b| b.meter) }
+    pub fn clear_snapshot(&mut self) {
+        self.snapshots.clear();
+    }
+    pub fn bus_meter(&self, bus: BusId) -> Option<Meter> {
+        self.mixer.bus(bus).map(|b| b.meter)
+    }
 
     pub fn list_bus_meters(&self) -> Vec<BusMeterInfo> {
         self.mixer
@@ -685,7 +822,9 @@ impl Runtime {
     }
 
     fn audibility_for(&self, inst: &EventInstance) -> f32 {
-        if !inst.is_3d { return 1.0; }
+        if !inst.is_3d {
+            return 1.0;
+        }
         let listener = self.events.listener();
         let d = distance(&listener, &inst.attributes);
         inst.attenuation.gain_at(d) * inst.gain_user
@@ -695,7 +834,9 @@ impl Runtime {
         let listener = self.events.listener();
         let mut updates: Vec<(VoiceHandle, f32, f32)> = Vec::new();
         for inst in self.events.instances_mut() {
-            let Some(voice) = inst.voice else { continue };
+            let Some(voice) = inst.voice else {
+                continue;
+            };
             let mut gain = inst.gain_user;
             let mut pitch = 1.0;
             if inst.is_3d {
