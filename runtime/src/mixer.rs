@@ -191,54 +191,65 @@ impl Mixer {
     pub fn accumulate_voice(&mut self, voice_id: u64, voice_out: &[f32]) {
         let bus_id = self.bus_for_voice(voice_id);
         if let Some(b) = self.buses.get_mut(&bus_id.0) {
-            for (dst, src) in b.buffer.iter_mut().zip(voice_out.iter()) {
-                *dst += *src;
+            let n = b.buffer.len().min(voice_out.len());
+            for i in 0..n {
+                b.buffer[i] += voice_out[i];
             }
         }
     }
 
     pub fn finish(&mut self, out: &mut [f32], channels: usize, sample_rate: u32) {
         let any_solo = self.any_solo();
-        // Process leaf buses into parents, then master
         let mut ids: Vec<u32> = self.buses.keys().copied().collect();
         ids.sort_unstable();
+
         for id in ids.iter().rev() {
-            let Some(bus) = self.buses.get_mut(id) else { continue };
-            if any_solo && !bus.solo && bus.id != self.master_id {
-                // still allow path to master if not soloed when solo active: mute non-solo leaves
-                if bus.parent.is_some() {
+            if *id == self.master_id.0 {
+                continue;
+            }
+            let (parent, buf_copy, mute_solo) = {
+                let Some(bus) = self.buses.get_mut(id) else {
+                    continue;
+                };
+                let silenced = any_solo && !bus.solo;
+                if silenced {
                     bus.buffer.fill(0.0);
                 }
-            }
-            let vol = bus.volume_linear();
-            for s in bus.buffer.iter_mut() {
-                *s *= vol;
-            }
-            // inserts
-            let inserts = bus.inserts.clone();
-            let states = &mut bus.effect_state;
-            for (fx, st) in inserts.iter().zip(states.iter_mut()) {
-                fx.process(&mut bus.buffer, channels, sample_rate, st);
-            }
-            bus.meter.update(&bus.buffer);
-            let parent = bus.parent;
-            let buf = bus.buffer.clone();
+                let vol = bus.volume_linear();
+                for s in bus.buffer.iter_mut() {
+                    *s *= vol;
+                }
+                let inserts = bus.inserts.clone();
+                while bus.effect_state.len() < inserts.len() {
+                    bus.effect_state.push(EffectState::default());
+                }
+                for (fx, st) in inserts.iter().zip(bus.effect_state.iter_mut()) {
+                    fx.process(&mut bus.buffer, channels, sample_rate, st);
+                }
+                bus.meter.update(&bus.buffer);
+                (bus.parent, bus.buffer.clone(), silenced)
+            };
+            let _ = mute_solo;
             if let Some(pid) = parent {
                 if let Some(p) = self.buses.get_mut(&pid.0) {
-                    for (dst, src) in p.buffer.iter_mut().zip(buf.iter()) {
-                        *dst += *src;
+                    let n = p.buffer.len().min(buf_copy.len());
+                    for i in 0..n {
+                        p.buffer[i] += buf_copy[i];
                     }
                 }
             }
         }
+
         if let Some(master) = self.buses.get_mut(&self.master_id.0) {
             let vol = master.volume_linear();
             for s in master.buffer.iter_mut() {
                 *s *= vol;
             }
             let inserts = master.inserts.clone();
-            let states = &mut master.effect_state;
-            for (fx, st) in inserts.iter().zip(states.iter_mut()) {
+            while master.effect_state.len() < inserts.len() {
+                master.effect_state.push(EffectState::default());
+            }
+            for (fx, st) in inserts.iter().zip(master.effect_state.iter_mut()) {
                 fx.process(&mut master.buffer, channels, sample_rate, st);
             }
             master.meter.update(&master.buffer);
