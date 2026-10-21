@@ -191,11 +191,10 @@ impl AudioBridge {
     }
 
     pub fn pump(&mut self, dt: f32) {
-        if self.playing_id.is_none() && self.preview_voice.is_none() {
-            // Still pump if crossfade voices may be active
-            // Always tick briefly to finish fades
-        }
         self.rt.tick(dt);
+        if let Some(id) = self.rt.current_designed_instance() {
+            self.playing_id = Some(id);
+        }
         let frames = ((dt * self.rt.sample_rate() as f32).max(1.0) as usize).min(4096);
         let mut out = vec![0.0f32; frames * self.rt.channels() as usize];
         self.rt.render(&mut out);
