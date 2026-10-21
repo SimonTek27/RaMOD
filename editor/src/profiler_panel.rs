@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, snapshots).
+//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses, snapshots, 3D map).
 
 use eframe::egui;
 
@@ -220,6 +220,20 @@ impl ProfilerPanel {
         }
 
         ui.separator();
+        ui.label("3D emitters (XZ top-down)");
+        draw_emitter_map(ui, snap);
+        if snap.emitters.is_empty() {
+            ui.weak("No 3D instances — mark event as 3D and Play");
+        } else {
+            for (i, e) in snap.emitters.iter().enumerate() {
+                ui.weak(format!(
+                    "  #{i}  ({:.1}, {:.1}, {:.1})  aud {:.2}",
+                    e.position.x, e.position.y, e.position.z, e.audibility
+                ));
+            }
+        }
+
+        ui.separator();
         ui.label("Spectrum");
         let bands = &snap.spectrum_bands;
         if bands.is_empty() {
@@ -283,4 +297,49 @@ fn draw_sparkline(ui: &mut egui::Ui, data: &[u32], color: egui::Color32, height:
         egui::FontId::monospace(10.0),
         egui::Color32::GRAY,
     );
+}
+
+fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) {
+    let size = 140.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(22, 24, 28));
+    let mid = rect.center();
+    painter.line_segment(
+        [egui::pos2(rect.left(), mid.y), egui::pos2(rect.right(), mid.y)],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 48)),
+    );
+    painter.line_segment(
+        [egui::pos2(mid.x, rect.top()), egui::pos2(mid.x, rect.bottom())],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 48)),
+    );
+    let scale = size / 100.0;
+    let to_screen = |x: f32, z: f32| egui::pos2(mid.x + x * scale, mid.y - z * scale);
+    let (lx, _ly, lz) = snap.listener;
+    let lp = to_screen(lx, lz);
+    painter.circle_filled(lp, 5.0, egui::Color32::from_rgb(80, 200, 120));
+    painter.text(
+        lp + egui::vec2(6.0, -8.0),
+        egui::Align2::LEFT_TOP,
+        "L",
+        egui::FontId::monospace(10.0),
+        egui::Color32::from_rgb(80, 200, 120),
+    );
+    for e in &snap.emitters {
+        let p = to_screen(e.position.x, e.position.z);
+        let r = 3.0 + e.audibility.clamp(0.0, 1.0) * 6.0;
+        let alpha = (80.0 + e.audibility.clamp(0.0, 1.0) * 175.0) as u8;
+        painter.circle_filled(
+            p,
+            r,
+            egui::Color32::from_rgba_unmultiplied(220, 120, 60, alpha),
+        );
+        painter.line_segment(
+            [lp, p],
+            egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(180, 180, 100, 80),
+            ),
+        );
+    }
 }
