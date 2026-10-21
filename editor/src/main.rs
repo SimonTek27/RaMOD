@@ -573,6 +573,16 @@ impl eframe::App for RamodEditorApp {
                                 }
                             }
                         }
+                        ProfilerAction::ToggleMute(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.toggle_bus_mute(id);
+                            }
+                        }
+                        ProfilerAction::ToggleSolo(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.toggle_bus_solo(id);
+                            }
+                        }
                         ProfilerAction::None => {}
                     }
                 });
