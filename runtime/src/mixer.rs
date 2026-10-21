@@ -1,10 +1,9 @@
-//! Hierarchical mixer buses, mute/solo, metering, snapshots (S4).
+//! Hierarchical mixer with bus meters and voice routing.
 
 use std::collections::HashMap;
 
-use crate::dsp::{process_effect, EffectState, InsertEffect};
+use crate::dsp::{EffectState, InsertEffect};
 
-/// Stable bus id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BusId(pub u32);
 
@@ -18,8 +17,8 @@ pub struct Meter {
 impl Meter {
     pub fn update(&mut self, samples: &[f32]) {
         if samples.is_empty() {
-            self.peak *= 0.95;
-            self.rms *= 0.95;
+            self.peak *= 0.9;
+            self.rms *= 0.9;
             return;
         }
         let mut peak = 0.0f32;
@@ -31,17 +30,12 @@ impl Meter {
             }
             sum_sq += s * s;
         }
-        let rms = (sum_sq / samples.len() as f32).sqrt();
-        self.peak = if peak > self.peak {
-            peak
-        } else {
-            self.peak * 0.92 + peak * 0.08
-        };
-        self.rms = self.rms * 0.9 + rms * 0.1;
+        self.peak = peak.max(self.peak * 0.85);
+        self.rms = (sum_sq / samples.len() as f32).sqrt();
     }
 
     pub fn peak_db(&self) -> f32 {
-        if self.peak < 1e-8 {
+        if self.peak <= 1e-9 {
             -96.0
         } else {
             20.0 * self.peak.log10()
@@ -49,7 +43,7 @@ impl Meter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Bus {
     pub id: BusId,
     pub name: String,
@@ -121,6 +115,13 @@ impl Mixer {
         self.default_bus
     }
 
+    pub fn find_by_name(&self, name: &str) -> Option<BusId> {
+        self.buses
+            .values()
+            .find(|b| b.name.eq_ignore_ascii_case(name))
+            .map(|b| b.id)
+    }
+
     pub fn add_bus(&mut self, name: impl Into<String>, parent: Option<BusId>) -> BusId {
         let id = BusId(self.next_id);
         self.next_id += 1;
@@ -180,39 +181,9 @@ impl Mixer {
             .unwrap_or(self.default_bus)
     }
 
-    /// Local gain only (mute/solo/volume). Parent gains applied when parent processes.
-    fn local_gain(&self, id: BusId) -> f32 {
-        let any_solo = self.any_solo();
-        let Some(b) = self.buses.get(&id.0) else {
-            return 0.0;
-        };
-        if b.mute {
-            return 0.0;
-        }
-        if any_solo && !self.solo_path(id) {
-            return 0.0;
-        }
-        b.volume_linear()
-    }
-
-    fn solo_path(&self, id: BusId) -> bool {
-        let mut cur = Some(id);
-        while let Some(cid) = cur {
-            let Some(b) = self.buses.get(&cid.0) else {
-                return false;
-            };
-            if b.solo {
-                return true;
-            }
-            cur = b.parent;
-        }
-        false
-    }
-
     pub fn prepare(&mut self, frames: usize, channels: usize) {
-        let n = frames * channels;
         for b in self.buses.values_mut() {
-            b.buffer.resize(n, 0.0);
+            b.buffer.resize(frames * channels, 0.0);
             b.buffer.fill(0.0);
         }
     }
@@ -220,78 +191,64 @@ impl Mixer {
     pub fn accumulate_voice(&mut self, voice_id: u64, voice_out: &[f32]) {
         let bus_id = self.bus_for_voice(voice_id);
         if let Some(b) = self.buses.get_mut(&bus_id.0) {
-            let n = b.buffer.len().min(voice_out.len());
-            for i in 0..n {
-                b.buffer[i] += voice_out[i];
+            for (dst, src) in b.buffer.iter_mut().zip(voice_out.iter()) {
+                *dst += *src;
             }
         }
     }
 
     pub fn finish(&mut self, out: &mut [f32], channels: usize, sample_rate: u32) {
-        let mut order: Vec<u32> = self.buses.keys().copied().filter(|id| *id != 0).collect();
-        order.sort_unstable();
-
-        for id in order {
-            let parent = self.buses.get(&id).and_then(|b| b.parent);
-            let (mut buf, inserts, mut states) = {
-                let b = self.buses.get_mut(&id).unwrap();
-                (
-                    std::mem::take(&mut b.buffer),
-                    b.inserts.clone(),
-                    std::mem::take(&mut b.effect_state),
-                )
-            };
-            while states.len() < inserts.len() {
-                states.push(EffectState::default());
+        let any_solo = self.any_solo();
+        // Process leaf buses into parents, then master
+        let mut ids: Vec<u32> = self.buses.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids.iter().rev() {
+            let Some(bus) = self.buses.get_mut(id) else { continue };
+            if any_solo && !bus.solo && bus.id != self.master_id {
+                // still allow path to master if not soloed when solo active: mute non-solo leaves
+                if bus.parent.is_some() {
+                    bus.buffer.fill(0.0);
+                }
             }
+            let vol = bus.volume_linear();
+            for s in bus.buffer.iter_mut() {
+                *s *= vol;
+            }
+            // inserts
+            let inserts = bus.inserts.clone();
+            let states = &mut bus.effect_state;
             for (fx, st) in inserts.iter().zip(states.iter_mut()) {
-                process_effect(fx, st, &mut buf, channels, sample_rate);
+                fx.process(&mut bus.buffer, channels, sample_rate, st);
             }
-            let gain = self.local_gain(BusId(id));
-            for s in buf.iter_mut() {
-                *s *= gain;
-            }
-            if let Some(b) = self.buses.get_mut(&id) {
-                b.meter.update(&buf);
-                b.effect_state = states;
-                if let Some(pid) = parent {
-                    if let Some(p) = self.buses.get_mut(&pid.0) {
-                        let n = p.buffer.len().min(buf.len());
-                        for i in 0..n {
-                            p.buffer[i] += buf[i];
-                        }
+            bus.meter.update(&bus.buffer);
+            let parent = bus.parent;
+            let buf = bus.buffer.clone();
+            if let Some(pid) = parent {
+                if let Some(p) = self.buses.get_mut(&pid.0) {
+                    for (dst, src) in p.buffer.iter_mut().zip(buf.iter()) {
+                        *dst += *src;
                     }
                 }
-                b.buffer = buf;
             }
         }
-
-        let master = self.buses.get_mut(&0).unwrap();
-        let mut buf = std::mem::take(&mut master.buffer);
-        let inserts = master.inserts.clone();
-        let mut states = std::mem::take(&mut master.effect_state);
-        while states.len() < inserts.len() {
-            states.push(EffectState::default());
-        }
-        for (fx, st) in inserts.iter().zip(states.iter_mut()) {
-            process_effect(fx, st, &mut buf, channels, sample_rate);
-        }
-        let gain = self.local_gain(BusId(0));
-        for s in buf.iter_mut() {
-            *s *= gain;
-        }
-        if let Some(master) = self.buses.get_mut(&0) {
-            master.meter.update(&buf);
-            master.effect_state = states;
-        }
-
-        let n = out.len().min(buf.len());
-        out[..n].copy_from_slice(&buf[..n]);
-        if n < out.len() {
-            out[n..].fill(0.0);
-        }
-        if let Some(master) = self.buses.get_mut(&0) {
-            master.buffer = buf;
+        if let Some(master) = self.buses.get_mut(&self.master_id.0) {
+            let vol = master.volume_linear();
+            for s in master.buffer.iter_mut() {
+                *s *= vol;
+            }
+            let inserts = master.inserts.clone();
+            let states = &mut master.effect_state;
+            for (fx, st) in inserts.iter().zip(states.iter_mut()) {
+                fx.process(&mut master.buffer, channels, sample_rate, st);
+            }
+            master.meter.update(&master.buffer);
+            let n = out.len().min(master.buffer.len());
+            out[..n].copy_from_slice(&master.buffer[..n]);
+            if out.len() > n {
+                out[n..].fill(0.0);
+            }
+        } else {
+            out.fill(0.0);
         }
     }
 }
@@ -317,27 +274,25 @@ impl Snapshot {
 
 #[derive(Debug, Default)]
 pub struct SnapshotPlayer {
-    snapshots: HashMap<String, Snapshot>,
+    base: HashMap<u32, f32>,
     active: Option<(String, f32)>,
-    base_volumes: HashMap<u32, f32>,
+    snaps: Vec<Snapshot>,
 }
 
 impl SnapshotPlayer {
     pub fn add(&mut self, snap: Snapshot) {
-        self.snapshots.insert(snap.name.clone(), snap);
+        self.snaps.push(snap);
     }
 
     pub fn capture_base(&mut self, mixer: &Mixer) {
-        self.base_volumes.clear();
+        self.base.clear();
         for b in mixer.buses() {
-            self.base_volumes.insert(b.id.0, b.volume_db);
+            self.base.insert(b.id.0, b.volume_db);
         }
     }
 
     pub fn trigger(&mut self, name: &str, weight: f32) {
-        if self.snapshots.contains_key(name) {
-            self.active = Some((name.to_string(), weight.clamp(0.0, 1.0)));
-        }
+        self.active = Some((name.to_string(), weight.clamp(0.0, 1.0)));
     }
 
     pub fn clear(&mut self) {
@@ -345,16 +300,14 @@ impl SnapshotPlayer {
     }
 
     pub fn apply(&self, mixer: &mut Mixer) {
-        let Some((ref name, w)) = self.active else {
-            return;
-        };
-        let Some(snap) = self.snapshots.get(name) else {
-            return;
-        };
-        for (id, target) in &snap.volumes {
-            let base = self.base_volumes.get(id).copied().unwrap_or(0.0);
-            let db = base + (target - base) * w;
-            mixer.set_volume_db(BusId(*id), db);
+        if let Some((ref name, w)) = self.active {
+            if let Some(snap) = self.snaps.iter().find(|s| s.name == *name) {
+                for (id, &target) in &snap.volumes {
+                    let base = self.base.get(id).copied().unwrap_or(0.0);
+                    let db = base + (target - base) * w;
+                    mixer.set_volume_db(BusId(*id), db);
+                }
+            }
         }
     }
 }
