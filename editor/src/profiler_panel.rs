@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, buses, snapshots, interactive 3D map).
+//! S7 — Editor Profiler panel (CPU, buses, snapshots, 3D map, inserts).
 
 use eframe::egui;
 
@@ -32,6 +32,11 @@ pub enum ProfilerAction {
     ClearSnapshot,
     SetEmitterPos { x: f32, z: f32 },
     SetListenerPos { x: f32, z: f32 },
+    AddLowPass(u32),
+    AddHighPass(u32),
+    AddCompressor(u32),
+    AddReverb(u32),
+    ClearInserts(u32),
 }
 
 impl ProfilerPanel {
@@ -172,6 +177,33 @@ impl ProfilerPanel {
                         );
                     }
                     ui.weak(format!("p {:.2}", b.peak));
+                });
+                ui.horizontal(|ui| {
+                    ui.weak("FX");
+                    if ui.small_button("LP").on_hover_text("Low-pass 2kHz").clicked() {
+                        action = ProfilerAction::AddLowPass(b.id);
+                    }
+                    if ui.small_button("HP").on_hover_text("High-pass 200Hz").clicked() {
+                        action = ProfilerAction::AddHighPass(b.id);
+                    }
+                    if ui.small_button("Comp").on_hover_text("Compressor").clicked() {
+                        action = ProfilerAction::AddCompressor(b.id);
+                    }
+                    if ui.small_button("Rev").on_hover_text("Reverb delay").clicked() {
+                        action = ProfilerAction::AddReverb(b.id);
+                    }
+                    if ui.small_button("✕").on_hover_text("Clear inserts").clicked() {
+                        action = ProfilerAction::ClearInserts(b.id);
+                    }
+                    let n = snap
+                        .insert_counts
+                        .iter()
+                        .find(|(id, _)| *id == b.id)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0);
+                    if n > 0 {
+                        ui.weak(format!("{n} ins"));
+                    }
                 });
             }
         }
