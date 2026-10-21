@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, AutomationCurve, BusId, BusMeterInfo, DesignedEvent, EmitterDebug,
-    EventDescription, InstrumentDef, PlayParams, Runtime, RuntimeConfig, TimelineTrack,
-    TransitionMarker,
+    Attenuation, Attributes3d, AutomationCurve, BusId, BusMeterInfo, DesignedEvent,
+    EmitterDebug, EventDescription, InstrumentDef, PlayParams, Runtime, RuntimeConfig,
+    TimelineTrack, TransitionMarker, Vec3,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -332,6 +332,22 @@ impl AudioBridge {
 
     pub fn active_snapshot(&self) -> Option<(String, f32)> {
         self.rt.active_snapshot()
+    }
+
+    pub fn set_emitter_xz(&mut self, x: f32, z: f32) {
+        let Some(id) = self.playing_id else {
+            return;
+        };
+        let mut attrs = Attributes3d::default();
+        attrs.position = Vec3::new(x, 0.0, z);
+        self.rt.set_instance_3d(id, attrs);
+    }
+
+    pub fn set_listener_xz(&mut self, x: f32, z: f32) {
+        let mut a = self.rt.listener();
+        a.position.x = x;
+        a.position.z = z;
+        self.rt.set_listener(a);
     }
 }
 
