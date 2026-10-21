@@ -76,6 +76,7 @@ impl AudioBridge {
                 designed.is_3d = ev.is_3d;
                 designed.length = ev.length;
                 designed.parameters = ev.parameters.clone();
+                designed.output_bus = ev.output_bus.clone();
                 for a in &ev.automation {
                     let mut curve = AutomationCurve::new(&a.parameter);
                     for &(t, v) in &a.keys {
@@ -142,6 +143,7 @@ impl AudioBridge {
             for (name, default) in &ev.parameters {
                 desc = desc.with_parameter(name.clone(), *default);
             }
+            desc = desc.with_output_bus(ev.output_bus.clone());
             self.rt.register_event(desc);
             self.registered.push(ev.path.clone());
         }
