@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, buses, snapshots, 3D map, inserts).
+//! S7 — Editor Profiler panel (CPU, buses, FX params, snapshots, 3D map).
 
 use eframe::egui;
 
@@ -37,6 +37,8 @@ pub enum ProfilerAction {
     AddCompressor(u32),
     AddReverb(u32),
     ClearInserts(u32),
+    UpdateInsert(crate::audio_bridge::BusInsertInfo),
+    RemoveInsert { bus_id: u32, index: usize },
 }
 
 impl ProfilerPanel {
@@ -205,6 +207,125 @@ impl ProfilerPanel {
                         ui.weak(format!("{n} ins"));
                     }
                 });
+                for ins in snap.bus_inserts.iter().filter(|i| i.bus_id == b.id) {
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("  [{}] {}", ins.index, ins.kind));
+                        let mut info = ins.clone();
+                        match ins.kind.as_str() {
+                            "LowPass" | "HighPass" => {
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p0)
+                                            .speed(10.0)
+                                            .range(20.0..=20000.0)
+                                            .suffix(" Hz")
+                                            .fixed_decimals(0),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info);
+                                }
+                            }
+                            "Compressor" => {
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p0)
+                                            .speed(0.5)
+                                            .range(-60.0..=0.0)
+                                            .suffix(" thr")
+                                            .fixed_decimals(1),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info.clone());
+                                }
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p1)
+                                            .speed(0.1)
+                                            .range(1.0..=20.0)
+                                            .suffix(":1")
+                                            .fixed_decimals(1),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info.clone());
+                                }
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p2)
+                                            .speed(0.25)
+                                            .range(0.0..=24.0)
+                                            .suffix(" mk")
+                                            .fixed_decimals(1),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info);
+                                }
+                            }
+                            "Reverb" => {
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p0)
+                                            .speed(1.0)
+                                            .range(1.0..=500.0)
+                                            .suffix(" ms")
+                                            .fixed_decimals(0),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info.clone());
+                                }
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p1)
+                                            .speed(0.01)
+                                            .range(0.0..=0.95)
+                                            .suffix(" fb")
+                                            .fixed_decimals(2),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info.clone());
+                                }
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p2)
+                                            .speed(0.01)
+                                            .range(0.0..=1.0)
+                                            .suffix(" wet")
+                                            .fixed_decimals(2),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info);
+                                }
+                            }
+                            "Gain" => {
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut info.p0)
+                                            .speed(0.25)
+                                            .range(-48.0..=12.0)
+                                            .suffix(" dB")
+                                            .fixed_decimals(1),
+                                    )
+                                    .changed()
+                                {
+                                    action = ProfilerAction::UpdateInsert(info);
+                                }
+                            }
+                            _ => {}
+                        }
+                        if ui.small_button("×").clicked() {
+                            action = ProfilerAction::RemoveInsert {
+                                bus_id: ins.bus_id,
+                                index: ins.index,
+                            };
+                        }
+                    });
+                }
             }
         }
 
