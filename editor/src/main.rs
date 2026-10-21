@@ -190,34 +190,6 @@ impl RamodEditorApp {
         }
     }
 
-    fn open_asset_in_waveform(&mut self, index: usize) {
-        if let Some(asset) = self.project.assets.get(index) {
-            if let Some(ref sp) = asset.source_path {
-                let p = PathBuf::from(sp);
-                if self.waveform.import_wav(&p) {
-                    self.waveform.show = true;
-                    self.status_msg = format!("Opened {}", sp);
-                } else {
-                    self.status_msg = self.waveform.status.clone();
-                }
-            } else if let Some(freq) = asset.demo_freq_hz {
-                let rate = 48_000u32;
-                let frames = rate as usize / 2;
-                let samples: Vec<f32> = (0..frames)
-                    .map(|i| {
-                        let t = i as f32 / rate as f32;
-                        (2.0 * std::f32::consts::PI * freq * t).sin() * 0.4
-                    })
-                    .collect();
-                if let Ok(mut w) = ramod_waveform::WaveBuffer::new(samples, 1, rate) {
-                    w.select_all();
-                    self.waveform.wave = Some(w);
-                    self.waveform.show = true;
-                }
-            }
-        }
-    }
-
     fn handle_file_drops(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -244,10 +216,6 @@ impl RamodEditorApp {
                 self.status_msg = self.waveform.status.clone();
             }
         }
-    }
-
-    fn drop_hover_hint(&self, ctx: &egui::Context) -> bool {
-        ctx.input(|i| !i.raw.hovered_files.is_empty())
     }
 }
 
@@ -416,10 +384,8 @@ impl eframe::App for RamodEditorApp {
                                 let path = PathBuf::from("profiler_session.ndjson");
                                 match std::fs::write(&path, &ndjson) {
                                     Ok(()) => {
-                                        self.status_msg = format!(
-                                            "Exported → {}",
-                                            path.display()
-                                        );
+                                        self.status_msg =
+                                            format!("Exported → {}", path.display());
                                     }
                                     Err(e) => {
                                         self.status_msg = format!("Export failed: {e}");
@@ -467,6 +433,16 @@ impl eframe::App for RamodEditorApp {
                                 a.clear_snapshot();
                             }
                             self.status_msg = "Snapshot cleared (base restored)".into();
+                        }
+                        ProfilerAction::SetEmitterPos { x, z } => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.set_emitter_xz(x, z);
+                            }
+                        }
+                        ProfilerAction::SetListenerPos { x, z } => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.set_listener_xz(x, z);
+                            }
                         }
                         ProfilerAction::None => {}
                     }
