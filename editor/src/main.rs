@@ -150,24 +150,6 @@ impl RamodEditorApp {
         self.status_msg = format!("Asset added: {}", path.display());
     }
 
-    fn assign_selected_asset_to_event(&mut self) {
-        let (Some(ei), Some(ai)) = (self.selected_event, self.selected_asset) else {
-            self.status_msg = "Select an event and an asset first".into();
-            return;
-        };
-        match self.project.assign_asset_to_event(ei, ai) {
-            Ok(()) => {
-                let ev = &self.project.events[ei].path;
-                let asset = &self.project.assets[ai].name;
-                self.status_msg = format!("Assigned {asset} → {ev}");
-                if let Some(a) = self.audio.as_mut() {
-                    a.sync_project(&self.project);
-                }
-            }
-            Err(e) => self.status_msg = e,
-        }
-    }
-
     fn build_bank(&mut self) {
         let bank = self
             .project
@@ -178,13 +160,7 @@ impl RamodEditorApp {
         let out = PathBuf::from("build");
         match self.project.export_bank_build(&bank, &out) {
             Ok(path) => {
-                let fsb = out.join(&bank).join(format!("{bank}.fsb"));
-                let fsb_note = if fsb.exists() {
-                    format!(" + {}", fsb.display())
-                } else {
-                    " (FSB skipped)".into()
-                };
-                self.status_msg = format!("Built {}{}", path.display(), fsb_note);
+                self.status_msg = format!("Built {}", path.display());
             }
             Err(e) => self.status_msg = format!("Build failed: {e}"),
         }
@@ -443,6 +419,36 @@ impl eframe::App for RamodEditorApp {
                             if let Some(a) = self.audio.as_mut() {
                                 a.set_listener_xz(x, z);
                             }
+                        }
+                        ProfilerAction::AddLowPass(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.add_bus_lowpass(id);
+                            }
+                            self.status_msg = "Bus FX: LowPass".into();
+                        }
+                        ProfilerAction::AddHighPass(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.add_bus_highpass(id);
+                            }
+                            self.status_msg = "Bus FX: HighPass".into();
+                        }
+                        ProfilerAction::AddCompressor(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.add_bus_compressor(id);
+                            }
+                            self.status_msg = "Bus FX: Compressor".into();
+                        }
+                        ProfilerAction::AddReverb(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.add_bus_reverb(id);
+                            }
+                            self.status_msg = "Bus FX: Reverb".into();
+                        }
+                        ProfilerAction::ClearInserts(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.clear_bus_inserts(id);
+                            }
+                            self.status_msg = "Bus inserts cleared".into();
                         }
                         ProfilerAction::None => {}
                     }
