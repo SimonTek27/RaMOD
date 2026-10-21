@@ -39,6 +39,18 @@ pub use profiler::{EmitterDebug, ProfilerFrame, ProfilerSession, SpectrumAnalyze
 pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
+/// One bus row for the editor profiler.
+#[derive(Debug, Clone)]
+pub struct BusMeterInfo {
+    pub id: u32,
+    pub name: String,
+    pub peak: f32,
+    pub rms: f32,
+    pub mute: bool,
+    pub solo: bool,
+    pub volume_db: f32,
+}
+
 #[cfg(feature = "live-update")]
 pub use live_update::{LiveUpdateClient, LiveUpdateServer};
 
@@ -656,6 +668,21 @@ impl Runtime {
     }
     pub fn clear_snapshot(&mut self) { self.snapshots.clear(); }
     pub fn bus_meter(&self, bus: BusId) -> Option<Meter> { self.mixer.bus(bus).map(|b| b.meter) }
+
+    pub fn list_bus_meters(&self) -> Vec<BusMeterInfo> {
+        self.mixer
+            .buses()
+            .map(|b| BusMeterInfo {
+                id: b.id.0,
+                name: b.name.clone(),
+                peak: b.meter.peak,
+                rms: b.meter.rms,
+                mute: b.mute,
+                solo: b.solo,
+                volume_db: b.volume_db,
+            })
+            .collect()
+    }
 
     fn audibility_for(&self, inst: &EventInstance) -> f32 {
         if !inst.is_3d { return 1.0; }
