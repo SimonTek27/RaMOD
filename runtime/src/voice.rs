@@ -1,13 +1,17 @@
-//! Voice pool and mixing.
+//! Voice pool with pitch, gain, AHDSR, steal, and per-voice mix.
 
 use crate::buffer::{BufferHandle, BufferStore, PcmBuffer};
 use crate::envelope::Ahdsr;
 
-/// Handle to a playing voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VoiceHandle(pub(crate) u64);
 
-/// Playback parameters for [`crate::Runtime::play`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceState {
+    Playing,
+    Stopped,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PlayParams {
     pub gain: f32,
@@ -21,12 +25,6 @@ impl Default for PlayParams {
             looped: false,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VoiceState {
-    Playing,
-    Stopped,
 }
 
 struct Voice {
@@ -43,9 +41,7 @@ struct Voice {
     audibility: f32,
     alive: bool,
     envelope: Option<Ahdsr>,
-    /// Seconds since note-on.
     env_t: f32,
-    /// Envelope gain multiplier.
     env_gain: f32,
 }
 
@@ -77,11 +73,10 @@ impl VoicePool {
         audibility: f32,
         envelope: Option<Ahdsr>,
     ) -> Result<VoiceHandle, ()> {
-        self.reap_finished();
         if self.active_count() >= self.max {
             return Err(());
         }
-        let env_gain = envelope.map(|e| e.gain_at(0.0)).unwrap_or(1.0);
+        let src_frames = buf.samples.len() / buf.channels.max(1) as usize;
         self.voices.push(Voice {
             id,
             buffer,
@@ -91,13 +86,13 @@ impl VoicePool {
             looped: params.looped,
             src_rate: buf.sample_rate,
             src_channels: buf.channels,
-            src_frames: buf.frames(),
+            src_frames,
             priority,
             audibility,
             alive: true,
             envelope,
             env_t: 0.0,
-            env_gain,
+            env_gain: 1.0,
         });
         Ok(VoiceHandle(id))
     }
@@ -107,51 +102,57 @@ impl VoicePool {
             if !v.alive {
                 continue;
             }
-            v.env_t += dt;
             if let Some(env) = v.envelope {
+                v.env_t += dt;
                 v.env_gain = env.gain_at(v.env_t);
             }
         }
     }
 
     pub fn steal_lowest(&mut self, priority: i32, audibility: f32) -> bool {
-        let score = |v: &Voice| v.priority as f32 * 1000.0 + v.audibility;
-        let new_score = priority as f32 * 1000.0 + audibility;
-        let victim = self
-            .voices
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.alive)
-            .min_by(|a, b| {
-                score(a.1)
-                    .partial_cmp(&score(b.1))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        if let Some((idx, v)) = victim {
-            if score(v) < new_score {
-                self.voices[idx].alive = false;
-                self.reap_finished();
-                return true;
+        let mut best: Option<usize> = None;
+        let mut best_score = f32::MAX;
+        for (i, v) in self.voices.iter().enumerate() {
+            if !v.alive {
+                continue;
+            }
+            let score = v.priority as f32 * 1000.0 + v.audibility;
+            if v.priority < priority || (v.priority == priority && v.audibility < audibility) {
+                if score < best_score {
+                    best_score = score;
+                    best = Some(i);
+                }
             }
         }
-        false
+        if let Some(i) = best {
+            self.voices[i].alive = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn stop(&mut self, h: VoiceHandle) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == h.0) {
-            v.alive = false;
+        for v in self.voices.iter_mut() {
+            if v.id == h.0 {
+                v.alive = false;
+            }
         }
     }
 
     pub fn set_gain(&mut self, h: VoiceHandle, gain: f32) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == h.0) {
-            v.gain = gain;
+        for v in self.voices.iter_mut() {
+            if v.id == h.0 {
+                v.gain = gain.max(0.0);
+            }
         }
     }
 
     pub fn set_pitch(&mut self, h: VoiceHandle, pitch: f32) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.id == h.0) {
-            v.pitch = pitch.clamp(0.25, 4.0);
+        for v in self.voices.iter_mut() {
+            if v.id == h.0 {
+                v.pitch = pitch.max(0.01);
+            }
         }
     }
 
@@ -167,6 +168,23 @@ impl VoicePool {
         out_rate: u32,
         buffers: &BufferStore,
     ) {
+        self.mix_each(frames, out_ch, out_rate, buffers, |_id, slice| {
+            for (d, s) in out.iter_mut().zip(slice.iter()) {
+                *d += *s;
+            }
+        });
+    }
+
+    /// Mix each live voice into a temporary buffer and invoke `on_voice(id, samples)`.
+    pub fn mix_each(
+        &mut self,
+        frames: usize,
+        out_ch: usize,
+        out_rate: u32,
+        buffers: &BufferStore,
+        mut on_voice: impl FnMut(u64, &[f32]),
+    ) {
+        let mut temp = vec![0.0f32; frames * out_ch];
         for voice in self.voices.iter_mut() {
             if !voice.alive {
                 continue;
@@ -180,8 +198,10 @@ impl VoicePool {
                 voice.alive = false;
                 continue;
             }
+            temp.fill(0.0);
             let ratio = (out_rate as f64 / voice.src_rate.max(1) as f64) / voice.pitch as f64;
             let env_g = voice.env_gain;
+            let id = voice.id;
 
             for f in 0..frames {
                 let src_pos = voice.cursor / ratio;
@@ -204,10 +224,11 @@ impl VoicePool {
                     let s0 = buf.samples.get(i0).copied().unwrap_or(0.0);
                     let s1 = buf.samples.get(i1).copied().unwrap_or(s0);
                     let s = s0 + (s1 - s0) * frac;
-                    out[f * out_ch + c] += s * voice.gain * env_g;
+                    temp[f * out_ch + c] = s * voice.gain * env_g;
                 }
                 voice.cursor += 1.0;
             }
+            on_voice(id, &temp);
         }
     }
 }
