@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use ramod::{Fsb5, SoundFormat};
+use ramod::{decode_sample_to_pcm, Fsb5, SoundFormat};
 use ramod_runtime::{
     Attributes3d, Attenuation, EventDescription, Runtime, RuntimeConfig, Vec3 as RVec3,
 };
@@ -109,7 +109,8 @@ impl RamodAudio {
         self.register_bank_asset(&bank)
     }
 
-    /// Register every PCM sample in an FSB5 bank as `event:/fsb/<sample_name>`.
+    /// Register every sample in an FSB5 bank as `event:/fsb/<sample_name>`.
+    /// Supports PCM8/16/32/Float and **Vorbis** (via pure-Rust decode).
     pub fn load_fsb(&mut self, path: &Path) -> Result<usize, String> {
         let bank =
             Fsb5::from_file(path).map_err(|e| format!("FSB open {}: {e}", path.display()))?;
@@ -226,6 +227,20 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
     let sample = bank
         .sample(index)
         .ok_or_else(|| format!("sample {index} missing"))?;
+
+    // Vorbis: rebuild Ogg + lewton (does not need raw payload mapping here)
+    if matches!(bank.format, SoundFormat::Vorbis) {
+        let decoded =
+            decode_sample_to_pcm(bank, index).map_err(|e| format!("vorbis decode: {e}"))?;
+        let ch = decoded.channels.max(1) as u16;
+        let rate = if decoded.sample_rate == 0 {
+            48_000
+        } else {
+            decoded.sample_rate
+        };
+        return Ok((decoded.samples, ch, rate));
+    }
+
     let data = bank
         .sample_data(index)
         .ok_or_else(|| format!("sample {index} data missing"))?;
@@ -253,7 +268,7 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
             .collect(),
         other => {
             return Err(format!(
-                "format {other} not supported for FSB load (PCM8/16/32/Float only; use bank.json for Vorbis)"
+                "format {other} not supported for FSB load (PCM or Vorbis only)"
             ));
         }
     };
