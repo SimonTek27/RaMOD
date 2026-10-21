@@ -279,6 +279,10 @@ impl AudioBridge {
             .unwrap_or(false);
         self.rt.set_bus_solo(id, !solo);
     }
+
+    pub fn set_bus_volume_db(&mut self, bus_id: u32, db: f32) {
+        self.rt.set_bus_volume_db(BusId(bus_id), db.clamp(-60.0, 24.0));
+    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -21,6 +21,8 @@ pub enum ProfilerAction {
     ExportNdjson,
     ToggleMute(u32),
     ToggleSolo(u32),
+    /// (bus_id, volume_db)
+    SetVolume(u32, f32),
 }
 
 impl ProfilerPanel {
@@ -91,7 +93,7 @@ impl ProfilerPanel {
         } else {
             for b in &snap.bus_meters {
                 ui.horizontal(|ui| {
-                    ui.label(format!("{}  {:+.1} dB", b.name, b.volume_db));
+                    ui.label(&b.name);
                     let mute_label = if b.mute { "M●" } else { "M" };
                     let solo_label = if b.solo { "S●" } else { "S" };
                     if ui
@@ -122,8 +124,21 @@ impl ProfilerPanel {
                     {
                         action = ProfilerAction::ToggleSolo(b.id);
                     }
+                    let mut vol = b.volume_db;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut vol)
+                                .speed(0.25)
+                                .range(-48.0..=12.0)
+                                .suffix(" dB")
+                                .fixed_decimals(1),
+                        )
+                        .changed()
+                    {
+                        action = ProfilerAction::SetVolume(b.id, vol);
+                    }
                     let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(90.0, 12.0), egui::Sense::hover());
+                        ui.allocate_exact_size(egui::vec2(70.0, 12.0), egui::Sense::hover());
                     let painter = ui.painter();
                     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(28, 28, 30));
                     let fill = b.peak.clamp(0.0, 1.0) * rect.width();
