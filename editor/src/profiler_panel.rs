@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler (CPU, buses, FX, snapshots, 3D map + Doppler).
+//! S7 — Profiler panel (CPU, buses, FX params/presets, snapshots, 3D Doppler).
 
 use eframe::egui;
 
@@ -8,6 +8,7 @@ use crate::audio_bridge::ProfilerSnapshot;
 pub struct ProfilerPanel {
     pub show: bool,
     pub snap_name: String,
+    pub fx_preset_name: String,
 }
 
 impl Default for ProfilerPanel {
@@ -15,6 +16,7 @@ impl Default for ProfilerPanel {
         Self {
             show: true,
             snap_name: "Combat".into(),
+            fx_preset_name: "MyChain".into(),
         }
     }
 }
@@ -39,15 +41,22 @@ pub enum ProfilerAction {
     ClearInserts(u32),
     UpdateInsert(crate::audio_bridge::BusInsertInfo),
     RemoveInsert { bus_id: u32, index: usize },
+    SaveFxPreset,
+    ApplyFxPreset(String),
+    DeleteFxPreset(String),
 }
 
 impl ProfilerPanel {
-    pub fn ui(&mut self, ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> ProfilerAction {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        snap: &ProfilerSnapshot,
+        fx_preset_names: &[String],
+    ) -> ProfilerAction {
         let mut action = ProfilerAction::None;
 
         ui.horizontal(|ui| {
             ui.heading("Profiler");
-            ui.separator();
             if ui.button("Clear").clicked() {
                 action = ProfilerAction::Clear;
             }
@@ -60,272 +69,146 @@ impl ProfilerPanel {
 
         ui.horizontal(|ui| {
             kpi(ui, "CPU", format!("{} µs", snap.cpu_render_us));
-            kpi(ui, "Avg CPU", format!("{:.0} µs", snap.avg_cpu_us));
+            kpi(ui, "Avg", format!("{:.0} µs", snap.avg_cpu_us));
             kpi(
                 ui,
                 "Voices",
-                format!("{} (peak {})", snap.active_voices, snap.peak_voices),
+                format!("{} / peak {}", snap.active_voices, snap.peak_voices),
             );
-            kpi(ui, "Instances", format!("{}", snap.active_instances));
-        });
-
-        ui.horizontal(|ui| {
-            kpi(ui, "Peak", format!("{:.3}", snap.master_peak));
-            kpi(ui, "RMS", format!("{:.3}", snap.master_rms));
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 16.0), egui::Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(28, 28, 30));
-            let fill = snap.master_peak.clamp(0.0, 1.0) * rect.width();
-            let color = if snap.master_peak > 0.9 {
-                egui::Color32::from_rgb(220, 60, 60)
-            } else if snap.master_peak > 0.6 {
-                egui::Color32::from_rgb(220, 180, 40)
-            } else {
-                egui::Color32::from_rgb(60, 180, 90)
-            };
-            if fill > 0.5 {
-                painter.rect_filled(
-                    egui::Rect::from_min_size(rect.min, egui::vec2(fill, rect.height())),
-                    2.0,
-                    color,
-                );
-            }
         });
 
         ui.separator();
-        ui.label("CPU timeline (µs)");
-        draw_sparkline(ui, &snap.cpu_history, egui::Color32::from_rgb(100, 180, 255), 48.0);
-        ui.label("Voices timeline");
-        draw_sparkline(ui, &snap.voice_history, egui::Color32::from_rgb(120, 200, 120), 36.0);
-
-        ui.separator();
-        ui.label("Playing events");
-        if snap.playing_events.is_empty() {
-            ui.weak("(none)");
-        } else {
-            for p in &snap.playing_events {
-                ui.monospace(p);
-            }
-        }
+        ui.label("CPU timeline");
+        draw_sparkline(ui, &snap.cpu_history, egui::Color32::from_rgb(100, 180, 255), 40.0);
+        ui.label("Voices");
+        draw_sparkline(ui, &snap.voice_history, egui::Color32::from_rgb(120, 200, 120), 32.0);
 
         ui.separator();
         ui.label("Buses");
-        if snap.bus_meters.is_empty() {
-            ui.weak("(no buses)");
-        } else {
-            for b in &snap.bus_meters {
-                ui.horizontal(|ui| {
-                    ui.label(&b.name);
-                    let mute_label = if b.mute { "M●" } else { "M" };
-                    let solo_label = if b.solo { "S●" } else { "S" };
-                    if ui
-                        .add(
-                            egui::Button::new(mute_label)
-                                .fill(if b.mute {
-                                    egui::Color32::from_rgb(120, 40, 40)
-                                } else {
-                                    egui::Color32::from_rgb(50, 50, 55)
-                                })
-                                .min_size(egui::vec2(22.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        action = ProfilerAction::ToggleMute(b.id);
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new(solo_label)
-                                .fill(if b.solo {
-                                    egui::Color32::from_rgb(140, 120, 30)
-                                } else {
-                                    egui::Color32::from_rgb(50, 50, 55)
-                                })
-                                .min_size(egui::vec2(22.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        action = ProfilerAction::ToggleSolo(b.id);
-                    }
-                    let mut vol = b.volume_db;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut vol)
-                                .speed(0.25)
-                                .range(-48.0..=12.0)
-                                .suffix(" dB")
-                                .fixed_decimals(1),
-                        )
-                        .changed()
-                    {
-                        action = ProfilerAction::SetVolume(b.id, vol);
-                    }
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(70.0, 12.0), egui::Sense::hover());
-                    let painter = ui.painter();
-                    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(28, 28, 30));
-                    let fill = b.peak.clamp(0.0, 1.0) * rect.width();
-                    let color = if b.peak > 0.9 {
-                        egui::Color32::from_rgb(220, 60, 60)
-                    } else if b.peak > 0.6 {
-                        egui::Color32::from_rgb(220, 180, 40)
-                    } else {
-                        egui::Color32::from_rgb(60, 180, 90)
-                    };
-                    if fill > 0.5 {
-                        painter.rect_filled(
-                            egui::Rect::from_min_size(rect.min, egui::vec2(fill, rect.height())),
-                            2.0,
-                            color,
-                        );
-                    }
-                    ui.weak(format!("p {:.2}", b.peak));
-                });
-                ui.horizontal(|ui| {
-                    ui.weak("FX");
-                    if ui.small_button("LP").on_hover_text("Low-pass 2kHz").clicked() {
-                        action = ProfilerAction::AddLowPass(b.id);
-                    }
-                    if ui.small_button("HP").on_hover_text("High-pass 200Hz").clicked() {
-                        action = ProfilerAction::AddHighPass(b.id);
-                    }
-                    if ui.small_button("Comp").on_hover_text("Compressor").clicked() {
-                        action = ProfilerAction::AddCompressor(b.id);
-                    }
-                    if ui.small_button("Rev").on_hover_text("Reverb delay").clicked() {
-                        action = ProfilerAction::AddReverb(b.id);
-                    }
-                    if ui.small_button("✕").on_hover_text("Clear inserts").clicked() {
-                        action = ProfilerAction::ClearInserts(b.id);
-                    }
-                    let n = snap
-                        .insert_counts
-                        .iter()
-                        .find(|(id, _)| *id == b.id)
-                        .map(|(_, c)| *c)
-                        .unwrap_or(0);
-                    if n > 0 {
-                        ui.weak(format!("{n} ins"));
-                    }
-                });
-                for ins in snap.bus_inserts.iter().filter(|i| i.bus_id == b.id) {
-                    ui.horizontal(|ui| {
-                        ui.monospace(format!("  [{}] {}", ins.index, ins.kind));
-                        let mut info = ins.clone();
-                        match ins.kind.as_str() {
-                            "LowPass" | "HighPass" => {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p0)
-                                            .speed(10.0)
-                                            .range(20.0..=20000.0)
-                                            .suffix(" Hz")
-                                            .fixed_decimals(0),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info);
-                                }
-                            }
-                            "Compressor" => {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p0)
-                                            .speed(0.5)
-                                            .range(-60.0..=0.0)
-                                            .suffix(" thr")
-                                            .fixed_decimals(1),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p1)
-                                            .speed(0.1)
-                                            .range(1.0..=20.0)
-                                            .suffix(":1")
-                                            .fixed_decimals(1),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p2)
-                                            .speed(0.25)
-                                            .range(0.0..=24.0)
-                                            .suffix(" mk")
-                                            .fixed_decimals(1),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info);
-                                }
-                            }
-                            "Reverb" => {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p0)
-                                            .speed(1.0)
-                                            .range(1.0..=500.0)
-                                            .suffix(" ms")
-                                            .fixed_decimals(0),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p1)
-                                            .speed(0.01)
-                                            .range(0.0..=0.95)
-                                            .suffix(" fb")
-                                            .fixed_decimals(2),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p2)
-                                            .speed(0.01)
-                                            .range(0.0..=1.0)
-                                            .suffix(" wet")
-                                            .fixed_decimals(2),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info);
-                                }
-                            }
-                            "Gain" => {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut info.p0)
-                                            .speed(0.25)
-                                            .range(-48.0..=12.0)
-                                            .suffix(" dB")
-                                            .fixed_decimals(1),
-                                    )
-                                    .changed()
-                                {
-                                    action = ProfilerAction::UpdateInsert(info);
-                                }
-                            }
-                            _ => {}
-                        }
-                        if ui.small_button("×").clicked() {
-                            action = ProfilerAction::RemoveInsert {
-                                bus_id: ins.bus_id,
-                                index: ins.index,
-                            };
-                        }
-                    });
+        for b in &snap.bus_meters {
+            ui.horizontal(|ui| {
+                ui.label(&b.name);
+                if ui
+                    .add(egui::Button::new(if b.mute { "M●" } else { "M" }).min_size(egui::vec2(22.0, 18.0)))
+                    .clicked()
+                {
+                    action = ProfilerAction::ToggleMute(b.id);
                 }
+                if ui
+                    .add(egui::Button::new(if b.solo { "S●" } else { "S" }).min_size(egui::vec2(22.0, 18.0)))
+                    .clicked()
+                {
+                    action = ProfilerAction::ToggleSolo(b.id);
+                }
+                let mut vol = b.volume_db;
+                if ui
+                    .add(egui::DragValue::new(&mut vol).speed(0.25).range(-48.0..=12.0).suffix(" dB"))
+                    .changed()
+                {
+                    action = ProfilerAction::SetVolume(b.id, vol);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.weak("FX");
+                if ui.small_button("LP").clicked() {
+                    action = ProfilerAction::AddLowPass(b.id);
+                }
+                if ui.small_button("HP").clicked() {
+                    action = ProfilerAction::AddHighPass(b.id);
+                }
+                if ui.small_button("Comp").clicked() {
+                    action = ProfilerAction::AddCompressor(b.id);
+                }
+                if ui.small_button("Rev").clicked() {
+                    action = ProfilerAction::AddReverb(b.id);
+                }
+                if ui.small_button("✕").clicked() {
+                    action = ProfilerAction::ClearInserts(b.id);
+                }
+                let n = snap
+                    .insert_counts
+                    .iter()
+                    .find(|(id, _)| *id == b.id)
+                    .map(|(_, c)| *c)
+                    .unwrap_or(0);
+                if n > 0 {
+                    ui.weak(format!("{n} ins"));
+                }
+            });
+            for ins in snap.bus_inserts.iter().filter(|i| i.bus_id == b.id) {
+                ui.horizontal(|ui| {
+                    ui.monospace(format!("  [{}] {}", ins.index, ins.kind));
+                    let mut info = ins.clone();
+                    match ins.kind.as_str() {
+                        "LowPass" | "HighPass" => {
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut info.p0)
+                                        .speed(10.0)
+                                        .range(20.0..=20000.0)
+                                        .suffix(" Hz"),
+                                )
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info);
+                            }
+                        }
+                        "Compressor" => {
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p0).speed(0.5).range(-60.0..=0.0).suffix(" thr"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p1).speed(0.1).range(1.0..=20.0).suffix(":1"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p2).speed(0.25).range(0.0..=24.0).suffix(" mk"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info);
+                            }
+                        }
+                        "Reverb" => {
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p0).speed(1.0).range(1.0..=500.0).suffix(" ms"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p1).speed(0.01).range(0.0..=0.95).suffix(" fb"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p2).speed(0.01).range(0.0..=1.0).suffix(" wet"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info);
+                            }
+                        }
+                        _ => {
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p0).speed(0.25).range(-48.0..=12.0).suffix(" dB"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info);
+                            }
+                        }
+                    }
+                    if ui.small_button("×").clicked() {
+                        action = ProfilerAction::RemoveInsert {
+                            bus_id: ins.bus_id,
+                            index: ins.index,
+                        };
+                    }
+                });
             }
         }
 
@@ -335,89 +218,69 @@ impl ProfilerPanel {
             if ui.button("Capture base").clicked() {
                 action = ProfilerAction::CaptureBase;
             }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.snap_name)
-                    .desired_width(90.0)
-                    .hint_text("name"),
-            );
+            ui.add(egui::TextEdit::singleline(&mut self.snap_name).desired_width(80.0));
             if ui.button("Save").clicked() {
                 action = ProfilerAction::SaveSnapshot;
             }
-            if ui.button("Clear active").clicked() {
+            if ui.button("Clear").clicked() {
                 action = ProfilerAction::ClearSnapshot;
             }
         });
-        if let Some((ref name, w)) = &snap.active_snapshot {
-            ui.weak(format!("active: {name} @ {:.0}%", w * 100.0));
-        } else {
-            ui.weak("active: (none)");
+        for name in &snap.snapshot_names {
+            ui.horizontal(|ui| {
+                ui.monospace(name);
+                if ui.small_button("50%").clicked() {
+                    action = ProfilerAction::TriggerSnapshot {
+                        name: name.clone(),
+                        weight: 0.5,
+                    };
+                }
+                if ui.small_button("100%").clicked() {
+                    action = ProfilerAction::TriggerSnapshot {
+                        name: name.clone(),
+                        weight: 1.0,
+                    };
+                }
+            });
         }
-        if snap.snapshot_names.is_empty() {
-            ui.weak("No snaps — tweak bus dB, Capture base, Save");
+
+        ui.separator();
+        ui.label("FX presets");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.fx_preset_name)
+                    .desired_width(90.0)
+                    .hint_text("name"),
+            );
+            if ui
+                .button("Save FX")
+                .on_hover_text("Save current bus inserts as preset")
+                .clicked()
+            {
+                action = ProfilerAction::SaveFxPreset;
+            }
+        });
+        if fx_preset_names.is_empty() {
+            ui.weak("No FX presets — add LP/Rev then Save FX");
         } else {
-            for name in &snap.snapshot_names {
+            for name in fx_preset_names {
                 ui.horizontal(|ui| {
                     ui.monospace(name);
-                    if ui.small_button("50%").clicked() {
-                        action = ProfilerAction::TriggerSnapshot {
-                            name: name.clone(),
-                            weight: 0.5,
-                        };
+                    if ui.small_button("Apply").clicked() {
+                        action = ProfilerAction::ApplyFxPreset(name.clone());
                     }
-                    if ui.small_button("100%").clicked() {
-                        action = ProfilerAction::TriggerSnapshot {
-                            name: name.clone(),
-                            weight: 1.0,
-                        };
+                    if ui.small_button("Del").clicked() {
+                        action = ProfilerAction::DeleteFxPreset(name.clone());
                     }
                 });
             }
         }
 
         ui.separator();
-        ui.label("3D emitters (XZ top-down)");
-        ui.weak("Drag = move + Doppler · release zeros velocity · scale ±50m");
+        ui.label("3D emitters");
+        ui.weak("Drag = move + Doppler");
         if let Some(a) = draw_emitter_map(ui, snap) {
             action = a;
-        }
-        if snap.emitters.is_empty() {
-            ui.weak("No 3D instances — mark event as 3D and Play");
-        } else {
-            for (i, e) in snap.emitters.iter().enumerate() {
-                ui.weak(format!(
-                    "  #{i}  ({:.1},{:.1},{:.1})  v({:.1},{:.1})  aud {:.2}",
-                    e.position.x,
-                    e.position.y,
-                    e.position.z,
-                    e.velocity.x,
-                    e.velocity.z,
-                    e.audibility
-                ));
-            }
-        }
-
-        ui.separator();
-        ui.label("Spectrum");
-        let bands = &snap.spectrum_bands;
-        if bands.is_empty() {
-            ui.weak("(no data)");
-        } else {
-            let h = 64.0;
-            let w = ui.available_width().max(80.0);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(25, 25, 28));
-            let n = bands.len().max(1) as f32;
-            let bar_w = (rect.width() / n).max(1.0) - 1.0;
-            for (i, &lv) in bands.iter().enumerate() {
-                let x = rect.left() + (i as f32 / n) * rect.width();
-                let bh = lv.clamp(0.0, 1.0) * (h - 2.0);
-                let bar = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.bottom() - bh),
-                    egui::vec2(bar_w, bh),
-                );
-                painter.rect_filled(bar, 1.0, egui::Color32::from_rgb(80, 160, 220));
-            }
         }
 
         action
@@ -429,15 +292,15 @@ fn kpi(ui: &mut egui::Ui, label: &str, value: String) {
         ui.weak(label);
         ui.strong(value);
     });
-    ui.add_space(12.0);
+    ui.add_space(8.0);
 }
 
 fn draw_sparkline(ui: &mut egui::Ui, data: &[u32], color: egui::Color32, height: f32) {
     if data.is_empty() {
-        ui.weak("(no samples — press Play)");
+        ui.weak("(play)");
         return;
     }
-    let w = ui.available_width().max(80.0);
+    let w = ui.available_width().max(60.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(25, 25, 28));
@@ -452,109 +315,42 @@ fn draw_sparkline(ui: &mut egui::Ui, data: &[u32], color: egui::Color32, height:
     if points.len() >= 2 {
         painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
     }
-    let last = *data.last().unwrap_or(&0);
-    painter.text(
-        rect.right_top() + egui::vec2(-4.0, 2.0),
-        egui::Align2::RIGHT_TOP,
-        format!("{last} (max {max_v:.0})"),
-        egui::FontId::monospace(10.0),
-        egui::Color32::GRAY,
-    );
 }
 
 fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> Option<ProfilerAction> {
-    let size = 140.0;
+    let size = 120.0;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(22, 24, 28));
     let mid = rect.center();
-    painter.line_segment(
-        [egui::pos2(rect.left(), mid.y), egui::pos2(rect.right(), mid.y)],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 48)),
-    );
-    painter.line_segment(
-        [egui::pos2(mid.x, rect.top()), egui::pos2(mid.x, rect.bottom())],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 48)),
-    );
     let scale = size / 100.0;
     let to_screen = |x: f32, z: f32| egui::pos2(mid.x + x * scale, mid.y - z * scale);
     let to_world = |pos: egui::Pos2| {
-        let x = ((pos.x - mid.x) / scale).clamp(-50.0, 50.0);
-        let z = ((mid.y - pos.y) / scale).clamp(-50.0, 50.0);
-        (x, z)
+        (
+            ((pos.x - mid.x) / scale).clamp(-50.0, 50.0),
+            ((mid.y - pos.y) / scale).clamp(-50.0, 50.0),
+        )
     };
-
-    let (lx, _ly, lz) = snap.listener;
+    let (lx, _, lz) = snap.listener;
     let lp = to_screen(lx, lz);
     painter.circle_filled(lp, 5.0, egui::Color32::from_rgb(80, 200, 120));
-    painter.text(
-        lp + egui::vec2(6.0, -8.0),
-        egui::Align2::LEFT_TOP,
-        "L",
-        egui::FontId::monospace(10.0),
-        egui::Color32::from_rgb(80, 200, 120),
-    );
     for e in &snap.emitters {
         let p = to_screen(e.position.x, e.position.z);
-        let r = 3.0 + e.audibility.clamp(0.0, 1.0) * 6.0;
-        let alpha = (80.0 + e.audibility.clamp(0.0, 1.0) * 175.0) as u8;
-        painter.circle_filled(
-            p,
-            r,
-            egui::Color32::from_rgba_unmultiplied(220, 120, 60, alpha),
-        );
-        painter.line_segment(
-            [lp, p],
-            egui::Stroke::new(
-                1.0,
-                egui::Color32::from_rgba_unmultiplied(180, 180, 100, 80),
-            ),
-        );
+        painter.circle_filled(p, 4.0 + e.audibility * 4.0, egui::Color32::from_rgb(220, 120, 60));
+        painter.line_segment([lp, p], egui::Stroke::new(1.0, egui::Color32::from_gray(80)));
     }
-
-    let mut action = None;
     let d = response.drag_delta();
     let vx = (d.x / scale) * 12.0;
     let vz = (-d.y / scale) * 12.0;
+    let mut action = None;
     if response.dragged() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let (wx, wz) = to_world(pointer);
-            let dist_l = pointer.distance(lp);
-            let mut nearest_emitter_d = f32::MAX;
-            for e in &snap.emitters {
-                let p = to_screen(e.position.x, e.position.z);
-                nearest_emitter_d = nearest_emitter_d.min(pointer.distance(p));
-            }
-            const HIT: f32 = 16.0;
-            if nearest_emitter_d < HIT && nearest_emitter_d <= dist_l {
-                action = Some(ProfilerAction::SetEmitterPos {
-                    x: wx,
-                    z: wz,
-                    vx,
-                    vz,
-                });
-            } else if dist_l < HIT {
-                action = Some(ProfilerAction::SetListenerPos {
-                    x: wx,
-                    z: wz,
-                    vx,
-                    vz,
-                });
-            } else if !snap.emitters.is_empty() {
-                action = Some(ProfilerAction::SetEmitterPos {
-                    x: wx,
-                    z: wz,
-                    vx,
-                    vz,
-                });
+            if !snap.emitters.is_empty() {
+                action = Some(ProfilerAction::SetEmitterPos { x: wx, z: wz, vx, vz });
             } else {
-                action = Some(ProfilerAction::SetListenerPos {
-                    x: wx,
-                    z: wz,
-                    vx,
-                    vz,
-                });
+                action = Some(ProfilerAction::SetListenerPos { x: wx, z: wz, vx, vz });
             }
         }
     } else if response.drag_stopped() {
@@ -563,26 +359,6 @@ fn draw_emitter_map(ui: &mut egui::Ui, snap: &ProfilerSnapshot) -> Option<Profil
             action = Some(ProfilerAction::SetEmitterPos {
                 x: e.position.x,
                 z: e.position.z,
-                vx: 0.0,
-                vz: 0.0,
-            });
-        }
-        let (lx, _, lz) = snap.listener;
-        if snap.emitters.is_empty() {
-            action = Some(ProfilerAction::SetListenerPos {
-                x: lx,
-                z: lz,
-                vx: 0.0,
-                vz: 0.0,
-            });
-        }
-    }
-    if response.double_clicked() {
-        if let Some(pointer) = response.interact_pointer_pos() {
-            let (wx, wz) = to_world(pointer);
-            action = Some(ProfilerAction::SetListenerPos {
-                x: wx,
-                z: wz,
                 vx: 0.0,
                 vz: 0.0,
             });
