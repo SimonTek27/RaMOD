@@ -4,8 +4,8 @@ use std::path::Path;
 
 use ramod_runtime::{
     Attenuation, Attributes3d, AutomationCurve, BusId, BusMeterInfo, DesignedEvent,
-    EmitterDebug, EventDescription, InstrumentDef, PlayParams, Runtime, RuntimeConfig,
-    TimelineTrack, TransitionMarker, Vec3,
+    EmitterDebug, EventDescription, InsertEffect, InstrumentDef, PlayParams, Runtime,
+    RuntimeConfig, TimelineTrack, TransitionMarker, Vec3,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -271,6 +271,12 @@ impl AudioBridge {
                 let l = self.rt.listener();
                 (l.position.x, l.position.y, l.position.z)
             },
+            insert_counts: self
+                .rt
+                .list_bus_meters()
+                .iter()
+                .map(|b| (b.id, self.rt.bus_insert_count(BusId(b.id))))
+                .collect(),
         }
     }
 
@@ -349,6 +355,32 @@ impl AudioBridge {
         a.position.z = z;
         self.rt.set_listener(a);
     }
+
+    pub fn add_bus_lowpass(&mut self, bus_id: u32) {
+        self.rt
+            .add_bus_insert(BusId(bus_id), InsertEffect::lowpass(2000.0));
+    }
+
+    pub fn add_bus_highpass(&mut self, bus_id: u32) {
+        self.rt
+            .add_bus_insert(BusId(bus_id), InsertEffect::highpass(200.0));
+    }
+
+    pub fn add_bus_compressor(&mut self, bus_id: u32) {
+        self.rt.add_bus_insert(
+            BusId(bus_id),
+            InsertEffect::compressor(-18.0, 4.0, 3.0),
+        );
+    }
+
+    pub fn add_bus_reverb(&mut self, bus_id: u32) {
+        self.rt
+            .add_bus_insert(BusId(bus_id), InsertEffect::reverb(45.0, 0.35, 0.25));
+    }
+
+    pub fn clear_bus_inserts(&mut self, bus_id: u32) {
+        self.rt.clear_bus_inserts(BusId(bus_id));
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -370,6 +402,7 @@ pub struct ProfilerSnapshot {
     pub active_snapshot: Option<(String, f32)>,
     pub emitters: Vec<EmitterDebug>,
     pub listener: (f32, f32, f32),
+    pub insert_counts: Vec<(u32, usize)>,
 }
 
 struct ResolvedPcm {
