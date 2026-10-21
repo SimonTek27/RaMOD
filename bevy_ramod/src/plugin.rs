@@ -87,13 +87,14 @@ impl RamodAudio {
             "json" => self.load_bank_dir(path),
             _ => {
                 if path.is_dir() {
-                    let fsb = path.join("Master.fsb");
                     let json = path.join("bank.json");
-                    if fsb.exists() {
-                        return self.load_fsb(&fsb);
-                    }
+                    let fsb = path.join("Master.fsb");
+                    // Prefer bank.json so Studio event paths are preserved; FSB PCM attached if present
                     if json.exists() {
                         return self.load_bank_dir(&json);
+                    }
+                    if fsb.exists() {
+                        return self.load_fsb(&fsb);
                     }
                 }
                 Err(format!(
@@ -106,7 +107,15 @@ impl RamodAudio {
 
     pub fn load_bank_dir(&mut self, bank_json: &Path) -> Result<usize, String> {
         let bank = RamodBankAsset::from_json_path(bank_json).map_err(|e| e.to_string())?;
-        self.register_bank_asset(&bank)
+        let base = bank.base_dir.clone().unwrap_or_else(|| {
+            bank_json
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        });
+        // Prefer sibling *.fsb for sample PCM (hybrid Studio path + binary bank)
+        let fsb_pcm = load_fsb_pcm_index(&base, &bank.name);
+        self.register_bank_asset_with_fsb(&bank, fsb_pcm.as_ref())
     }
 
     /// Register every sample in an FSB5 bank as `event:/fsb/<sample_name>`.
@@ -160,15 +169,27 @@ impl RamodAudio {
     }
 
     pub fn register_bank_asset(&mut self, bank: &RamodBankAsset) -> Result<usize, String> {
+        self.register_bank_asset_with_fsb(bank, None)
+    }
+
+    pub fn register_bank_asset_with_fsb(
+        &mut self,
+        bank: &RamodBankAsset,
+        fsb_pcm: Option<&HashMap<String, (Vec<f32>, u16, u32)>>,
+    ) -> Result<usize, String> {
         let base = bank
             .base_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
         let mut count = 0;
+        let mut from_fsb = 0usize;
         for ev in &bank.events {
-            match self.register_one_event(&base, ev) {
-                Ok(()) => {
+            match self.register_one_event(&base, ev, fsb_pcm) {
+                Ok(used_fsb) => {
                     count += 1;
+                    if used_fsb {
+                        from_fsb += 1;
+                    }
                     if !self.registered_events.iter().any(|e| e == &ev.path) {
                         self.registered_events.push(ev.path.clone());
                     }
@@ -179,15 +200,22 @@ impl RamodAudio {
             }
         }
         bevy::log::info!(
-            "RamodAudio: registered {count}/{} events from bank '{}'",
+            "RamodAudio: registered {count}/{} events from bank '{}' ({} from FSB)",
             bank.events.len(),
-            bank.name
+            bank.name,
+            from_fsb
         );
         Ok(count)
     }
 
-    fn register_one_event(&mut self, base: &Path, ev: &BankEventAsset) -> Result<(), String> {
-        let (samples, channels, sample_rate) = resolve_pcm(base, ev)?;
+    /// Returns Ok(true) if PCM came from FSB index.
+    fn register_one_event(
+        &mut self,
+        base: &Path,
+        ev: &BankEventAsset,
+        fsb_pcm: Option<&HashMap<String, (Vec<f32>, u16, u32)>>,
+    ) -> Result<bool, String> {
+        let (samples, channels, sample_rate, used_fsb) = resolve_pcm_hybrid(base, ev, fsb_pcm)?;
         let buf = self
             .runtime
             .load_pcm(samples, channels, sample_rate)
@@ -211,7 +239,7 @@ impl RamodAudio {
         }
 
         self.runtime.register_event(desc);
-        Ok(())
+        Ok(used_fsb)
     }
 
     pub fn play_event(&mut self, path: &str) -> Option<u64> {
@@ -228,7 +256,6 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
         .sample(index)
         .ok_or_else(|| format!("sample {index} missing"))?;
 
-    // Vorbis: rebuild Ogg + lewton (does not need raw payload mapping here)
     if matches!(bank.format, SoundFormat::Vorbis) {
         let decoded =
             decode_sample_to_pcm(bank, index).map_err(|e| format!("vorbis decode: {e}"))?;
@@ -276,12 +303,24 @@ fn fsb_sample_to_pcm(bank: &Fsb5, index: usize) -> Result<(Vec<f32>, u16, u32), 
     Ok((samples, channels, rate))
 }
 
-fn resolve_pcm(base: &Path, ev: &BankEventAsset) -> Result<(Vec<f32>, u16, u32), String> {
+fn resolve_pcm_hybrid(
+    base: &Path,
+    ev: &BankEventAsset,
+    fsb_pcm: Option<&HashMap<String, (Vec<f32>, u16, u32)>>,
+) -> Result<(Vec<f32>, u16, u32, bool), String> {
+    if let Some(map) = fsb_pcm {
+        for key in event_fsb_keys(ev) {
+            if let Some((samples, ch, rate)) = map.get(&key) {
+                return Ok((samples.clone(), *ch, *rate, true));
+            }
+        }
+    }
+
     if let Some(ref rel) = ev.asset_file {
         let full = base.join(rel);
         if full.exists() {
             let w = WaveBuffer::from_file(&full).map_err(|e| format!("{}: {e}", full.display()))?;
-            return Ok((w.samples, w.channels, w.sample_rate));
+            return Ok((w.samples, w.channels, w.sample_rate, false));
         }
         return Err(format!("asset file not found: {}", full.display()));
     }
@@ -295,7 +334,65 @@ fn resolve_pcm(base: &Path, ev: &BankEventAsset) -> Result<(Vec<f32>, u16, u32),
             (2.0 * std::f32::consts::PI * freq * t).sin() * 0.2
         })
         .collect();
-    Ok((samples, 1, rate))
+    Ok((samples, 1, rate, false))
+}
+
+fn event_fsb_keys(ev: &BankEventAsset) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(ref a) = ev.asset {
+        keys.push(a.clone());
+    }
+    if let Some(ref f) = ev.asset_file {
+        let p = Path::new(f);
+        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+            keys.push(stem.to_string());
+        }
+        if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+            keys.push(name.to_string());
+        }
+    }
+    if let Some(tail) = ev.path.rsplit('/').next() {
+        if !tail.is_empty() {
+            keys.push(tail.to_string());
+        }
+    }
+    keys
+}
+
+fn load_fsb_pcm_index(
+    base: &Path,
+    bank_name: &str,
+) -> Option<HashMap<String, (Vec<f32>, u16, u32)>> {
+    let candidates = [
+        base.join(format!("{bank_name}.fsb")),
+        base.join("Master.fsb"),
+    ];
+    let path = candidates.into_iter().find(|p| p.exists())?;
+    let bank = match Fsb5::from_file(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            bevy::log::warn!("hybrid FSB {}: {e}", path.display());
+            return None;
+        }
+    };
+    let mut map = HashMap::new();
+    for i in 0..bank.len() {
+        let Some(sample) = bank.sample(i) else {
+            continue;
+        };
+        match fsb_sample_to_pcm(&bank, i) {
+            Ok(pcm) => {
+                map.insert(sample.name.clone(), pcm);
+            }
+            Err(e) => bevy::log::warn!("FSB sample '{}': {e}", sample.name),
+        }
+    }
+    bevy::log::info!(
+        "hybrid: indexed {} samples from {}",
+        map.len(),
+        path.display()
+    );
+    Some(map)
 }
 
 pub struct RamodPlugin {
