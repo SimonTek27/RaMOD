@@ -125,7 +125,6 @@ pub fn show_event_editor(
         );
     }
 
-    // Markers row
     let (mark_rect, _) =
         ui.allocate_exact_size(egui::vec2(timeline_w, 16.0), egui::Sense::click());
     {
@@ -311,9 +310,31 @@ pub fn show_event_editor(
                     dirty = true;
                 }
                 if ui
-                    .add(egui::DragValue::new(&mut m.time).speed(0.01).range(0.0..=60.0).prefix("t "))
+                    .add(
+                        egui::DragValue::new(&mut m.time)
+                            .speed(0.01)
+                            .range(0.0..=60.0)
+                            .prefix("t "),
+                    )
                     .changed()
                 {
+                    dirty = true;
+                }
+                ui.label("→");
+                let mut target = m.target_event.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut target)
+                            .desired_width(160.0)
+                            .hint_text("event:/path"),
+                    )
+                    .changed()
+                {
+                    m.target_event = if target.trim().is_empty() {
+                        None
+                    } else {
+                        Some(target.trim().to_string())
+                    };
                     dirty = true;
                 }
                 if ui.small_button("x").clicked() {
