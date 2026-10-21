@@ -263,6 +263,8 @@ impl AudioBridge {
                     .map(|f| f.active_voices as u32)
                     .collect()
             },
+            snapshot_names: self.rt.snapshot_names(),
+            active_snapshot: self.rt.active_snapshot(),
         }
     }
 
@@ -301,6 +303,30 @@ impl AudioBridge {
     pub fn set_bus_volume_db(&mut self, bus_id: u32, db: f32) {
         self.rt.set_bus_volume_db(BusId(bus_id), db.clamp(-60.0, 24.0));
     }
+
+    pub fn capture_snapshot_base(&mut self) {
+        self.rt.capture_snapshot_base();
+    }
+
+    pub fn capture_named_snapshot(&mut self, name: &str) {
+        self.rt.capture_named_snapshot(name);
+    }
+
+    pub fn trigger_snapshot(&mut self, name: &str, weight: f32) {
+        self.rt.trigger_snapshot(name, weight);
+    }
+
+    pub fn clear_snapshot(&mut self) {
+        self.rt.clear_snapshot();
+    }
+
+    pub fn snapshot_names(&self) -> Vec<String> {
+        self.rt.snapshot_names()
+    }
+
+    pub fn active_snapshot(&self) -> Option<(String, f32)> {
+        self.rt.active_snapshot()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -318,6 +344,8 @@ pub struct ProfilerSnapshot {
     pub bus_meters: Vec<BusMeterInfo>,
     pub cpu_history: Vec<u32>,
     pub voice_history: Vec<u32>,
+    pub snapshot_names: Vec<String>,
+    pub active_snapshot: Option<(String, f32)>,
 }
 
 struct ResolvedPcm {
