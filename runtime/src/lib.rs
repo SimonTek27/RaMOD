@@ -74,6 +74,15 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// Voice scheduled for delayed start (multi-track timeline).
+struct ScheduledVoice {
+    remaining: f32,
+    buffer: BufferHandle,
+    params: PlayParams,
+    priority: i32,
+    envelope: Option<crate::envelope::Ahdsr>,
+}
+
 pub struct Runtime {
     sample_rate: u32,
     channels: u16,
@@ -86,6 +95,8 @@ pub struct Runtime {
     pub(crate) events: EventSystem,
     banks: BankRegistry,
     designed: Vec<DesignedEvent>,
+    designed_buffers: std::collections::HashMap<String, Vec<BufferHandle>>,
+    scheduled: Vec<ScheduledVoice>,
     profiler: crate::profiler::ProfilerSession,
     spectrum: crate::profiler::SpectrumAnalyzer,
     last_render_us: u32,
@@ -116,6 +127,8 @@ impl Runtime {
             events: EventSystem::new(),
             banks: BankRegistry::new(),
             designed: Vec::new(),
+            designed_buffers: std::collections::HashMap::new(),
+            scheduled: Vec::new(),
             profiler: crate::profiler::ProfilerSession::new(600),
             spectrum: crate::profiler::SpectrumAnalyzer::new(16),
             last_render_us: 0,
@@ -225,6 +238,24 @@ impl Runtime {
     }
 
     pub fn tick(&mut self, dt: f32) {
+        let mut still = Vec::new();
+        let due: Vec<_> = self
+            .scheduled
+            .drain(..)
+            .map(|mut s| {
+                s.remaining -= dt;
+                s
+            })
+            .collect();
+        for s in due {
+            if s.remaining <= 0.0 {
+                let _ = self.play_with_priority(s.buffer, s.params, s.priority, 1.0, s.envelope);
+            } else {
+                still.push(s);
+            }
+        }
+        self.scheduled = still;
+
         self.voices.advance_envelopes(dt);
         self.voices.reap_finished();
         self.sync_event_spatial_gains();
@@ -379,6 +410,8 @@ impl Runtime {
             desc = desc.with_parameter(n.clone(), *v);
         }
         self.events.register(desc);
+        self.designed_buffers
+            .insert(event.path.clone(), buffers.to_vec());
         self.designed.push(event);
         Ok(())
     }
@@ -405,7 +438,8 @@ impl Runtime {
                 continue;
             }
             for inst in &track.instruments {
-                let roll = simple_hash(&format!("{}:{}", path, inst.name)) as f32 / u64::MAX as f32;
+                let roll =
+                    simple_hash(&format!("{}:{}", path, inst.name)) as f32 / u64::MAX as f32;
                 if roll > inst.probability.clamp(0.0, 1.0) {
                     continue;
                 }
@@ -414,9 +448,10 @@ impl Runtime {
                     _ => 1,
                 };
                 for n in 0..count {
-                    let slot = if inst.buffer_slots.is_empty() {
+                    if inst.buffer_slots.is_empty() {
                         continue;
-                    } else if inst.kind == designer::InstrumentKind::Multi {
+                    }
+                    let slot = if inst.kind == designer::InstrumentKind::Multi {
                         let idx = (simple_hash(&(inst.name.clone() + &n.to_string())) as usize)
                             % inst.buffer_slots.len();
                         inst.buffer_slots[idx]
@@ -430,20 +465,42 @@ impl Runtime {
                         gain: 1.0,
                         looped: inst.looping,
                     };
-                    match self.play_with_priority(
-                        buf,
-                        params,
-                        event.priority,
-                        1.0,
-                        Some(inst.envelope),
-                    ) {
-                        Ok(h) => handles.push(h),
-                        Err(_) => break,
+                    if inst.start_time <= 0.001 {
+                        match self.play_with_priority(
+                            buf,
+                            params,
+                            event.priority,
+                            1.0,
+                            Some(inst.envelope),
+                        ) {
+                            Ok(h) => handles.push(h),
+                            Err(_) => break,
+                        }
+                    } else {
+                        self.scheduled.push(ScheduledVoice {
+                            remaining: inst.start_time,
+                            buffer: buf,
+                            params,
+                            priority: event.priority,
+                            envelope: Some(inst.envelope),
+                        });
                     }
                 }
             }
         }
         Ok(handles)
+    }
+
+    pub fn play_designed_registered(
+        &mut self,
+        path: &str,
+    ) -> Result<Vec<VoiceHandle>, RuntimeError> {
+        let buffers = self
+            .designed_buffers
+            .get(path)
+            .cloned()
+            .ok_or(RuntimeError::EventNotFound)?;
+        self.play_designed(path, &buffers)
     }
 
     pub fn designed_events(&self) -> &[DesignedEvent] {
@@ -495,6 +552,14 @@ impl Runtime {
     }
 
     pub fn play_event(&mut self, path: &str) -> Result<u64, RuntimeError> {
+        if self.designed.iter().any(|e| e.path == path) {
+            let _ = self.play_designed_registered(path)?;
+            let mut inst = self.create_instance(path)?;
+            inst.started = true;
+            let id = inst.id;
+            self.events.instances_reinsert(inst);
+            return Ok(id);
+        }
         let inst = self.create_instance(path)?;
         self.start_instance(inst)
     }
