@@ -555,6 +555,24 @@ impl eframe::App for RamodEditorApp {
                             }
                             self.status_msg = "Profiler cleared".into();
                         }
+                        ProfilerAction::ExportNdjson => {
+                            if let Some(a) = self.audio.as_ref() {
+                                let ndjson = a.profiler_ndjson();
+                                let path = PathBuf::from("profiler_session.ndjson");
+                                match std::fs::write(&path, &ndjson) {
+                                    Ok(()) => {
+                                        let lines = ndjson.lines().count();
+                                        self.status_msg = format!(
+                                            "Exported {lines} frames → {}",
+                                            path.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        self.status_msg = format!("Export failed: {e}");
+                                    }
+                                }
+                            }
+                        }
                         ProfilerAction::None => {}
                     }
                 });
