@@ -1,4 +1,4 @@
-//! S3.1 / S5 — Project model: events, banks, assets, multi-track timeline, automation.
+//! S3.1 / S5 — Project model: events, banks, assets, tracks, automation, markers.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -36,6 +36,8 @@ pub struct EventEntry {
     pub length: f32,
     #[serde(default)]
     pub automation: Vec<AutomationEntry>,
+    #[serde(default)]
+    pub markers: Vec<MarkerEntry>,
 }
 
 fn default_priority() -> i32 { 128 }
@@ -123,6 +125,24 @@ impl AutomationEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkerEntry {
+    pub name: String,
+    pub time: f32,
+    #[serde(default)]
+    pub target_event: Option<String>,
+}
+
+impl MarkerEntry {
+    pub fn new(name: impl Into<String>, time: f32) -> Self {
+        Self {
+            name: name.into(),
+            time,
+            target_event: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BankBuildManifest {
     pub name: String,
     pub project: String,
@@ -146,6 +166,8 @@ pub struct BankBuildEvent {
     pub length: f32,
     #[serde(default)]
     pub automation: Vec<AutomationEntry>,
+    #[serde(default)]
+    pub markers: Vec<MarkerEntry>,
 }
 
 impl Default for Project {
@@ -177,6 +199,7 @@ impl Default for Project {
                 }],
                 length: 4.0,
                 automation: vec![AutomationEntry::intensity_fade(1.0, 0.2, 2.0)],
+                markers: vec![MarkerEntry::new("end", 2.0)],
             }],
             banks: vec![BankEntry { name: "Master".into() }],
             assets: vec![AssetEntry {
@@ -216,6 +239,7 @@ impl Project {
             tracks: vec![TrackEntry::new("Audio 1")],
             length: 4.0,
             automation: Vec::new(),
+            markers: Vec::new(),
         });
     }
 
@@ -295,6 +319,7 @@ impl Project {
                 tracks: ev.tracks.clone(),
                 length: ev.length,
                 automation: ev.automation.clone(),
+                markers: ev.markers.clone(),
             });
         }
         let manifest = BankBuildManifest {

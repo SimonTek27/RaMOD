@@ -4,7 +4,7 @@ use std::path::Path;
 
 use ramod_runtime::{
     Attenuation, AutomationCurve, DesignedEvent, EventDescription, InstrumentDef, PlayParams,
-    Runtime, RuntimeConfig, TimelineTrack,
+    Runtime, RuntimeConfig, TimelineTrack, TransitionMarker,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -37,12 +37,14 @@ impl AudioBridge {
                 .map_err(|e| e.to_string())?
             }
         };
-        Ok(Self {
+        let mut bridge = Self {
             rt,
             registered: Vec::new(),
             playing_id: None,
             preview_voice: None,
-        })
+        };
+        bridge.rt.profiler_enable(true);
+        Ok(bridge)
     }
 
     pub fn sync_project(&mut self, project: &Project) {
@@ -63,6 +65,7 @@ impl AudioBridge {
             })
         }) {
             self.rt = rt;
+            self.rt.profiler_enable(true);
         }
 
         for ev in &project.events {
@@ -79,6 +82,13 @@ impl AudioBridge {
                         curve.add_key(t, v);
                     }
                     designed.automation.push(curve);
+                }
+                for m in &ev.markers {
+                    designed.markers.push(TransitionMarker {
+                        name: m.name.clone(),
+                        time: m.time,
+                        target_event: m.target_event.clone(),
+                    });
                 }
                 if ev.is_3d {
                     designed.attenuation = Attenuation {
@@ -139,6 +149,7 @@ impl AudioBridge {
 
     pub fn play_event(&mut self, path: &str) -> Result<(), String> {
         self.stop();
+        self.rt.clear_fired_markers();
         let id = self.rt.play_event(path).map_err(|e| e.to_string())?;
         self.playing_id = Some(id);
         Ok(())
@@ -196,6 +207,18 @@ impl AudioBridge {
     pub fn is_playing(&self) -> bool {
         self.playing_id.is_some() || self.preview_voice.is_some()
     }
+
+    pub fn master_levels(&self) -> (f32, f32) {
+        self.rt.master_levels()
+    }
+
+    pub fn last_fired_markers(&self) -> Vec<String> {
+        self.rt.last_fired_markers()
+    }
+
+    pub fn enable_profiler(&mut self, on: bool) {
+        self.rt.profiler_enable(on);
+    }
 }
 
 struct ResolvedPcm {
@@ -206,7 +229,6 @@ struct ResolvedPcm {
 
 fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
     let asset: Option<&AssetEntry> = ev.asset_index.and_then(|i| project.assets.get(i));
-
     if let Some(AssetEntry {
         source_path: Some(path),
         ..
@@ -220,7 +242,6 @@ fn resolve_asset_pcm(project: &Project, ev: &EventEntry) -> ResolvedPcm {
             };
         }
     }
-
     let freq = asset.and_then(|a| a.demo_freq_hz).unwrap_or(440.0);
     let rate = 48_000u32;
     let frames = rate as usize / 2;
