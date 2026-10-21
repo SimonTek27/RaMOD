@@ -1,4 +1,4 @@
-//! Hierarchical mixer with bus meters and voice routing.
+//! Hierarchical mixer with bus meters, voice routing, and inserts.
 
 use std::collections::HashMap;
 
@@ -170,6 +170,17 @@ impl Mixer {
         }
     }
 
+    pub fn clear_inserts(&mut self, id: BusId) {
+        if let Some(b) = self.buses.get_mut(&id.0) {
+            b.inserts.clear();
+            b.effect_state.clear();
+        }
+    }
+
+    pub fn insert_count(&self, id: BusId) -> usize {
+        self.buses.get(&id.0).map(|b| b.inserts.len()).unwrap_or(0)
+    }
+
     pub fn route_voice(&mut self, voice_id: u64, bus: BusId) {
         self.voice_route.insert(voice_id, bus);
     }
@@ -325,7 +336,6 @@ impl SnapshotPlayer {
         &self.base
     }
 
-    /// Capture current mixer volumes as a named snapshot (replaces same name).
     pub fn capture_named(&mut self, name: impl Into<String>, mixer: &Mixer) {
         let name = name.into();
         let mut snap = Snapshot::new(name.clone());
