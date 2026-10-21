@@ -250,9 +250,12 @@ impl AudioBridge {
     pub fn profiler_clear(&mut self) {
         self.rt.profiler_clear();
     }
+
+    pub fn profiler_ndjson(&self) -> String {
+        self.rt.profiler_session().to_ndjson()
+    }
 }
 
-/// Lightweight view for the editor Profiler panel.
 #[derive(Debug, Clone, Default)]
 pub struct ProfilerSnapshot {
     pub cpu_render_us: u32,
