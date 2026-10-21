@@ -1,4 +1,4 @@
-//! RamodPlugin + systems + bank.json / FSB load + parameter sync + despawn cleanup.
+//! RamodPlugin + systems + bank.json / FSB load + parameter sync + despawn cleanup + Live Update.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use ramod::{decode_sample_to_pcm, Fsb5, SoundFormat};
 use ramod_runtime::{
-    Attributes3d, Attenuation, EventDescription, Runtime, RuntimeConfig, Vec3 as RVec3,
+    live_update::LiveUpdateServer, Attributes3d, Attenuation, EventDescription, Runtime,
+    RuntimeConfig, Vec3 as RVec3,
 };
 use ramod_waveform::WaveBuffer;
 
@@ -28,6 +29,33 @@ impl InstanceMap {
 
     fn remove(&mut self, entity: Entity) -> Option<u64> {
         self.map.remove(&entity)
+    }
+}
+
+/// Optional Live Update TCP server (editor connects to game).
+#[derive(Resource)]
+pub struct LiveUpdateHub {
+    pub server: Option<LiveUpdateServer>,
+}
+
+impl LiveUpdateHub {
+    pub fn bind_default() -> Self {
+        match LiveUpdateServer::bind_default() {
+            Ok(server) => {
+                bevy::log::info!("Live Update listening on {}", server.local_addr());
+                Self {
+                    server: Some(server),
+                }
+            }
+            Err(e) => {
+                bevy::log::warn!("Live Update bind failed: {e}");
+                Self { server: None }
+            }
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self { server: None }
     }
 }
 
@@ -75,7 +103,6 @@ impl RamodAudio {
         }
     }
 
-    /// Load `bank.json` **or** `*.fsb` based on extension.
     pub fn load_bank_path(&mut self, path: &Path) -> Result<usize, String> {
         let ext = path
             .extension()
@@ -89,7 +116,6 @@ impl RamodAudio {
                 if path.is_dir() {
                     let json = path.join("bank.json");
                     let fsb = path.join("Master.fsb");
-                    // Prefer bank.json so Studio event paths are preserved; FSB PCM attached if present
                     if json.exists() {
                         return self.load_bank_dir(&json);
                     }
@@ -113,13 +139,10 @@ impl RamodAudio {
                 .unwrap_or(Path::new("."))
                 .to_path_buf()
         });
-        // Prefer sibling *.fsb for sample PCM (hybrid Studio path + binary bank)
         let fsb_pcm = load_fsb_pcm_index(&base, &bank.name);
         self.register_bank_asset_with_fsb(&bank, fsb_pcm.as_ref())
     }
 
-    /// Register every sample in an FSB5 bank as `event:/fsb/<sample_name>`.
-    /// Supports PCM8/16/32/Float and **Vorbis** (via pure-Rust decode).
     pub fn load_fsb(&mut self, path: &Path) -> Result<usize, String> {
         let bank =
             Fsb5::from_file(path).map_err(|e| format!("FSB open {}: {e}", path.display()))?;
@@ -208,7 +231,6 @@ impl RamodAudio {
         Ok(count)
     }
 
-    /// Returns Ok(true) if PCM came from FSB index.
     fn register_one_event(
         &mut self,
         base: &Path,
@@ -397,11 +419,16 @@ fn load_fsb_pcm_index(
 
 pub struct RamodPlugin {
     pub open_device: bool,
+    /// Bind TCP Live Update server (default port 17420).
+    pub enable_live_update: bool,
 }
 
 impl Default for RamodPlugin {
     fn default() -> Self {
-        Self { open_device: true }
+        Self {
+            open_device: true,
+            enable_live_update: true,
+        }
     }
 }
 
@@ -412,7 +439,14 @@ impl Plugin for RamodPlugin {
             RamodAudio::new(false).expect("headless runtime")
         });
 
+        let live = if self.enable_live_update {
+            LiveUpdateHub::bind_default()
+        } else {
+            LiveUpdateHub::disabled()
+        };
+
         app.insert_resource(audio)
+            .insert_resource(live)
             .init_resource::<InstanceMap>()
             .init_asset::<RamodBankAsset>()
             .register_asset_loader(RamodBankLoader)
@@ -426,6 +460,7 @@ impl Plugin for RamodPlugin {
                     sync_audio_parameters,
                     sync_emitters_3d,
                     cleanup_despawned_emitters,
+                    live_update_poll,
                     audio_tick_render,
                 )
                     .chain(),
@@ -608,6 +643,14 @@ fn cleanup_despawned_emitters(
         if let Some(id) = instances.remove(entity) {
             audio.runtime.release_instance(id);
             bevy::log::debug!("released instance {id} for despawned {entity:?}");
+        }
+    }
+}
+
+fn live_update_poll(mut audio: ResMut<RamodAudio>, mut live: ResMut<LiveUpdateHub>) {
+    if let Some(server) = live.server.as_mut() {
+        if let Err(e) = server.poll(&mut audio.runtime) {
+            bevy::log::debug!("live poll: {e}");
         }
     }
 }
