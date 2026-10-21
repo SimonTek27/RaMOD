@@ -1,4 +1,4 @@
-//! S7 — Editor Profiler panel (CPU, voices, spectrum).
+//! S7 — Editor Profiler panel (CPU, voices, spectrum, buses).
 
 use eframe::egui;
 
@@ -79,6 +79,43 @@ impl ProfilerPanel {
         } else {
             for p in &snap.playing_events {
                 ui.monospace(p);
+            }
+        }
+
+        ui.separator();
+        ui.label("Buses");
+        if snap.bus_meters.is_empty() {
+            ui.weak("(no buses)");
+        } else {
+            for b in &snap.bus_meters {
+                ui.horizontal(|ui| {
+                    let flags = match (b.mute, b.solo) {
+                        (true, _) => " [M]",
+                        (_, true) => " [S]",
+                        _ => "",
+                    };
+                    ui.label(format!("{}{}  {:+.1} dB", b.name, flags, b.volume_db));
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(100.0, 12.0), egui::Sense::hover());
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(28, 28, 30));
+                    let fill = b.peak.clamp(0.0, 1.0) * rect.width();
+                    let color = if b.peak > 0.9 {
+                        egui::Color32::from_rgb(220, 60, 60)
+                    } else if b.peak > 0.6 {
+                        egui::Color32::from_rgb(220, 180, 40)
+                    } else {
+                        egui::Color32::from_rgb(60, 180, 90)
+                    };
+                    if fill > 0.5 {
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(rect.min, egui::vec2(fill, rect.height())),
+                            2.0,
+                            color,
+                        );
+                    }
+                    ui.weak(format!("p {:.2}", b.peak));
+                });
             }
         }
 
