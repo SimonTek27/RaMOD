@@ -417,6 +417,7 @@ impl AudioBridge {
                     p0: info.p0,
                     p1: info.p1,
                     p2: info.p2,
+                    source_bus: info.source_bus,
                 });
             }
         }
@@ -444,6 +445,7 @@ impl AudioBridge {
                 p0: spec.p0,
                 p1: spec.p1,
                 p2: spec.p2,
+                source_bus: spec.source_bus.clone(),
             };
             self.rt.add_bus_insert(BusId(id), info.to_effect());
         }
@@ -481,6 +483,8 @@ pub struct BusInsertInfo {
     pub p0: f32,
     pub p1: f32,
     pub p2: f32,
+    /// Side-chain key bus name (e.g. "SFX"); empty for other FX.
+    pub source_bus: String,
 }
 
 impl BusInsertInfo {
@@ -493,6 +497,7 @@ impl BusInsertInfo {
                 p0: *gain_db,
                 p1: 0.0,
                 p2: 0.0,
+                source_bus: String::new(),
             },
             InsertEffect::LowPass { cutoff_hz } => Self {
                 bus_id,
@@ -501,6 +506,7 @@ impl BusInsertInfo {
                 p0: *cutoff_hz,
                 p1: 0.0,
                 p2: 0.0,
+                source_bus: String::new(),
             },
             InsertEffect::HighPass { cutoff_hz } => Self {
                 bus_id,
@@ -509,6 +515,7 @@ impl BusInsertInfo {
                 p0: *cutoff_hz,
                 p1: 0.0,
                 p2: 0.0,
+                source_bus: String::new(),
             },
             InsertEffect::Compressor {
                 threshold_db,
@@ -521,6 +528,7 @@ impl BusInsertInfo {
                 p0: *threshold_db,
                 p1: *ratio,
                 p2: *makeup_db,
+                source_bus: String::new(),
             },
             InsertEffect::Reverb {
                 delay_ms,
@@ -533,12 +541,13 @@ impl BusInsertInfo {
                 p0: *delay_ms,
                 p1: *feedback,
                 p2: *wet,
+                source_bus: String::new(),
             },
             InsertEffect::SidechainCompressor {
                 threshold_db,
                 ratio,
                 makeup_db,
-                source_bus: _,
+                source_bus,
             } => Self {
                 bus_id,
                 index,
@@ -546,6 +555,7 @@ impl BusInsertInfo {
                 p0: *threshold_db,
                 p1: *ratio,
                 p2: *makeup_db,
+                source_bus: source_bus.clone(),
             },
         }
     }
@@ -555,12 +565,14 @@ impl BusInsertInfo {
             "Gain" => InsertEffect::gain(self.p0),
             "HighPass" => InsertEffect::highpass(self.p0.max(20.0)),
             "Compressor" => InsertEffect::compressor(self.p0, self.p1.max(1.0), self.p2),
-            "Sidechain" => InsertEffect::sidechain_compressor(
-                self.p0,
-                self.p1.max(1.0),
-                self.p2,
-                "SFX",
-            ),
+            "Sidechain" => {
+                let key = if self.source_bus.is_empty() {
+                    "SFX"
+                } else {
+                    self.source_bus.as_str()
+                };
+                InsertEffect::sidechain_compressor(self.p0, self.p1.max(1.0), self.p2, key)
+            }
             "Reverb" => InsertEffect::reverb(
                 self.p0.max(1.0),
                 self.p1.clamp(0.0, 0.95),
