@@ -386,6 +386,12 @@ impl AudioBridge {
         self.rt
             .add_bus_insert(BusId(bus_id), InsertEffect::reverb(45.0, 0.35, 0.25));
     }
+    pub fn add_bus_sidechain(&mut self, bus_id: u32) {
+        self.rt.add_bus_insert(
+            BusId(bus_id),
+            InsertEffect::sidechain_compressor(-24.0, 6.0, 0.0, "SFX"),
+        );
+    }
     pub fn clear_bus_inserts(&mut self, bus_id: u32) {
         self.rt.clear_bus_inserts(BusId(bus_id));
     }
@@ -528,6 +534,19 @@ impl BusInsertInfo {
                 p1: *feedback,
                 p2: *wet,
             },
+            InsertEffect::SidechainCompressor {
+                threshold_db,
+                ratio,
+                makeup_db,
+                source_bus: _,
+            } => Self {
+                bus_id,
+                index,
+                kind: "Sidechain".into(),
+                p0: *threshold_db,
+                p1: *ratio,
+                p2: *makeup_db,
+            },
         }
     }
 
@@ -536,6 +555,12 @@ impl BusInsertInfo {
             "Gain" => InsertEffect::gain(self.p0),
             "HighPass" => InsertEffect::highpass(self.p0.max(20.0)),
             "Compressor" => InsertEffect::compressor(self.p0, self.p1.max(1.0), self.p2),
+            "Sidechain" => InsertEffect::sidechain_compressor(
+                self.p0,
+                self.p1.max(1.0),
+                self.p2,
+                "SFX",
+            ),
             "Reverb" => InsertEffect::reverb(
                 self.p0.max(1.0),
                 self.p1.clamp(0.0, 0.95),
