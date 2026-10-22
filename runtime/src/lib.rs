@@ -1,42 +1,30 @@
-//! # ramod_runtime — open-source real-time audio engine
-//!
-//! S1–S9 stack with audible cpal output via ring buffer.
+//! RaMOD runtime — voices, mixer, designer, profiler, live update.
 
 mod automation;
-mod backend;
-mod bank;
-mod buffer;
-mod bus;
 mod designer;
 mod dsp;
 mod envelope;
-mod error;
-mod event;
-mod export;
-mod live_api;
-#[cfg(feature = "live-update")]
-pub mod live_update;
+mod events;
 mod mixer;
 mod profiler;
 mod spatial;
+mod spectrum;
 mod voice;
 
-pub use automation::{AutomationCurve, Keyframe};
-pub use backend::{NullBackend, OutputBackend};
-pub use bank::{Bank, BankEventSpec, BankName, BankRegistry};
-pub use buffer::{BufferHandle, PcmBuffer};
-pub use bus::MasterBus;
+#[cfg(feature = "live-update")]
+mod live_update;
+
+pub use automation::AutomationCurve;
 pub use designer::{
     DesignedEvent, InstrumentDef, InstrumentKind, LoopRegion, TimelineTrack, TransitionMarker,
 };
 pub use dsp::InsertEffect;
 pub use envelope::Ahdsr;
-pub use error::RuntimeError;
-pub use event::{EventDescription, EventInstance, EventPath};
-pub use export::{BankManifest, EventManifestEntry};
-pub use mixer::{Bus, BusId, Meter, Mixer, Snapshot, SnapshotPlayer};
-pub use profiler::{EmitterDebug, ProfilerFrame, ProfilerSession, SpectrumAnalyzer};
-pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
+pub use events::{EventDescription, EventInstance};
+pub use mixer::{BusId, BusSend, Meter, Mixer, Snapshot, SnapshotPlayer};
+pub use profiler::{ProfilerFrame, ProfilerSession};
+pub use spatial::{distance, Attenuation, Attributes3d, Vec3};
+pub use spectrum::SpectrumAnalyzer;
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
 /// One bus row for the editor profiler.
@@ -49,6 +37,9 @@ pub struct BusMeterInfo {
     pub mute: bool,
     pub solo: bool,
     pub volume_db: f32,
+    /// Linear send level to the Reverb return bus (0..=1).
+    pub send_reverb: f32,
+    pub is_return: bool,
 }
 
 #[cfg(feature = "live-update")]
