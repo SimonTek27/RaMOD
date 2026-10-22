@@ -2,6 +2,8 @@
 //!
 //! Open-source alternative path to `bevy_fmod`, powered by pure-Rust `ramod_runtime`.
 //!
+//! **Bevy version:** 0.19 (aligned with [Renzora Engine](https://github.com/renzora/engine)).
+//!
 //! ## Quick path
 //!
 //! ```ignore
@@ -12,10 +14,18 @@
 //!     AudioParameter::new("RPM", 0.4),
 //! ));
 //! ```
+//!
+//! ## Renzora
+//!
+//! Enable feature `renzora` for host markers and setup helpers. See [`renzora`]
+//! and `docs/RENZORA.md`.
 
 mod assets;
 mod components;
 mod plugin;
+
+#[cfg(feature = "renzora")]
+pub mod renzora;
 
 pub mod prelude {
     pub use crate::assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};
@@ -27,6 +37,9 @@ pub mod prelude {
     pub use ramod_runtime::{
         Attributes3d, Attenuation, EventDescription, PlayParams, RuntimeConfig, Vec3,
     };
+
+    #[cfg(feature = "renzora")]
+    pub use crate::renzora::{RenzoraHost, RenzoraRamodExt};
 }
 
 pub use assets::{BankEventAsset, RamodBankAsset, RamodBankHandle};

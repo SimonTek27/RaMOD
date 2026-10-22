@@ -2,14 +2,21 @@
 name = "bevy_ramod"
 version = "0.1.0"
 edition = "2021"
-description = "Bevy integration for RaMOD — open-source FMOD-class audio"
+description = "Bevy integration for RaMOD — open-source FMOD-class audio (Bevy 0.19)"
 license.workspace = true
 repository.workspace = true
 publish = false
 rust-version = "1.85"
 
+[features]
+default = []
+# Renzora Engine integration: exposes adapter hooks and docs for using
+# bevy_ramod as a first-class audio path inside https://github.com/renzora/engine
+# (Bevy 0.19 aligned). Does not pull the full engine; see docs/RENZORA.md.
+renzora = []
+
 [dependencies]
-bevy = { version = "0.15", default-features = false, features = [
+bevy = { version = "0.19", default-features = false, features = [
     "bevy_asset",
     "bevy_render",
     "bevy_core_pipeline",
