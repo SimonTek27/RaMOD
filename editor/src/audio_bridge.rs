@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use ramod_runtime::{
-    Attenuation, Attributes3d, AutomationCurve, BusId, BusMeterInfo, DesignedEvent,
+    Ahdsr, Attenuation, Attributes3d, AutomationCurve, BusId, BusMeterInfo, DesignedEvent,
     EmitterDebug, EventDescription, InsertEffect, InstrumentDef, PlayParams, Runtime,
     RuntimeConfig, TimelineTrack, TransitionMarker, Vec3,
 };
@@ -116,6 +116,13 @@ impl AudioBridge {
                         idef.length = inst.length;
                         idef.probability = inst.probability;
                         idef.looping = inst.looping;
+                        idef.envelope = Ahdsr {
+                            attack: inst.attack,
+                            hold: inst.hold,
+                            decay: inst.decay,
+                            sustain: inst.sustain.clamp(0.0, 1.0),
+                            release: inst.release,
+                        };
                         track.instruments.push(idef);
                     }
                     designed.tracks.push(track);
@@ -483,7 +490,6 @@ pub struct BusInsertInfo {
     pub p0: f32,
     pub p1: f32,
     pub p2: f32,
-    /// Side-chain key bus name (e.g. "SFX"); empty for other FX.
     pub source_bus: String,
 }
 
