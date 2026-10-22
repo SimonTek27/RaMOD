@@ -21,6 +21,7 @@ Vorbis — with **zero external crates** (Rust standard library only).
 | [DESIGN.md](DESIGN.md) | Vision, goals, principles |
 | [ROADMAP.md](ROADMAP.md) | 50 operational items across 4 phases |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical blueprint (runtime, Bevy, editor) |
+| [docs/RENZORA.md](docs/RENZORA.md) | Renzora Engine (Bevy 0.19) integration |
 
 ---
 
@@ -126,6 +127,25 @@ cargo test
 Every push and pull request runs `cargo build`, `cargo test`, `cargo fmt --check`
 and `cargo clippy -D warnings` on Linux, Windows and macOS. Encoder tests skip
 themselves when the DLL encoder is unavailable.
+
+## Renzora Engine (Bevy 0.19)
+
+RaMOD can replace or sit beside [Renzora](https://github.com/renzora/engine) audio (Kira):
+
+```toml
+bevy_ramod = { git = "https://github.com/SimonTek27/RaMOD", features = ["renzora"] }
+```
+
+```rust
+// Option A — RaMOD only (recommended)
+App::new()
+    .add_plugins(DefaultPlugins)
+    .replace_renzora_audio_with_ramod()
+    .run();
+```
+
+Zero-glue Renzora `Backend` adapter: see [`docs/RENZORA.md`](docs/RENZORA.md) and
+[`docs/renzora_backend_glue.rs`](docs/renzora_backend_glue.rs).
 
 ## License
 

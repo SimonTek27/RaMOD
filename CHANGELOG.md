@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Renzora integration** (`bevy_ramod` feature `renzora`, Bevy **0.19**):
+  `replace_renzora_audio_with_ramod`, `RamodRenzoraBackend`, shared bus keys,
+  zero-glue Backend reference in `docs/renzora_backend_glue.rs`, guide
+  [`docs/RENZORA.md`](docs/RENZORA.md).
 - **Studio stack (S1–S9)** — `ramod_runtime` (mixer, voices, events, 3D, cpal ring),
   `ramod_editor` (egui Event Editor), `bevy_ramod`, `ramod_waveform` (GoldWave-style).
 - **Bank pipeline** — editor assign asset→event, `Build bank` → `bank.json` + assets +
@@ -37,6 +41,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vorbis_encode`** — PCM → Vorbis encoding path.
 - Spec-faithful layout: 32-byte-aligned sample data, name-table padding so the
   data section starts 32-byte aligned, and 32-byte padding of the data section.
-
-[Unreleased]: https://github.com/SimonTek27/RaMOD/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/SimonTek27/RaMOD/releases/tag/v0.1.0
