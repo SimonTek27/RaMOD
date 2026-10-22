@@ -444,6 +444,12 @@ impl eframe::App for RamodEditorApp {
                             }
                             self.status_msg = "Bus FX: Compressor".into();
                         }
+                        ProfilerAction::AddSidechain(id) => {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.add_bus_sidechain(id);
+                            }
+                            self.status_msg = "Bus FX: Sidechain (key=SFX)".into();
+                        }
                         ProfilerAction::AddReverb(id) => {
                             if let Some(a) = self.audio.as_mut() {
                                 a.add_bus_reverb(id);
