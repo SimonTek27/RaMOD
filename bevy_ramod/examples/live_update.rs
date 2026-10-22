@@ -14,7 +14,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "bevy_ramod Live Update (listen :17420)".into(),
-                resolution: (640., 360.).into(),
+                resolution: bevy::window::WindowResolution::new(640, 360),
                 ..default()
             }),
             ..default()
@@ -41,5 +41,5 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
         AudioParameter::new("Intensity", 1.0),
     ));
 
-    bevy::log::info!("Open ramod_editor → enable Live Update → tweak Intensity");
+    bevy::log::info!("Live Update listening — connect editor to push Intensity");
 }
