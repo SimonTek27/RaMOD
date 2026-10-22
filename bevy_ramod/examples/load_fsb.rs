@@ -19,12 +19,12 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "bevy_ramod load_fsb".into(),
-                resolution: (800., 600.).into(),
+                resolution: bevy::window::WindowResolution::new(800, 600),
                 ..default()
             }),
             ..default()
         }))
-        .add_plugins(RamodPlugin { open_device: true })
+        .add_plugins(RamodPlugin { open_device: true, ..Default::default() })
         .add_systems(Startup, setup)
         .add_systems(Update, spawn_when_ready)
         .run();
