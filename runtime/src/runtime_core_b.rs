@@ -484,6 +484,8 @@
     fn sync_event_spatial_gains(&mut self) {
         let listener = self.events.listener();
         let mut updates: Vec<(VoiceHandle, f32, f32)> = Vec::new();
+
+        // Single-voice event instances
         for inst in self.events.instances_mut() {
             let Some(voice) = inst.voice else {
                 continue;
@@ -501,6 +503,36 @@
             }
             updates.push((voice, gain, pitch));
         }
+
+        // Multi-track designed: same 3D/Doppler on every instrument voice
+        let designed_pairs: Vec<(u64, Vec<VoiceHandle>)> = self
+            .designed_playbacks
+            .iter()
+            .map(|pb| (pb.instance_id, pb.voices.clone()))
+            .collect();
+        for (instance_id, voices) in designed_pairs {
+            let Some(inst) = self.events.instance(instance_id) else {
+                continue;
+            };
+            let mut gain = inst.gain_user;
+            let mut pitch = 1.0;
+            if inst.is_3d {
+                let d = distance(&listener, &inst.attributes);
+                gain *= inst.attenuation.gain_at(d);
+                let closing = closing_speed(&listener, &inst.attributes);
+                pitch = spatial::doppler_pitch(closing);
+            }
+            if let Some(intensity) = inst.get_parameter("Intensity") {
+                gain *= intensity.clamp(0.0, 4.0);
+            }
+            for voice in voices {
+                if inst.voice == Some(voice) {
+                    continue;
+                }
+                updates.push((voice, gain, pitch));
+            }
+        }
+
         for (voice, gain, pitch) in updates {
             self.voices.set_gain(voice, gain);
             self.voices.set_pitch(voice, pitch);
