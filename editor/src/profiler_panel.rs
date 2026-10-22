@@ -1,4 +1,4 @@
-//! S7 — Profiler panel (CPU, buses, FX params/presets, snapshots, 3D Doppler).
+//! S7 — Profiler panel (CPU, buses, FX, side-chain, snapshots, 3D Doppler).
 
 use eframe::egui;
 
@@ -37,6 +37,7 @@ pub enum ProfilerAction {
     AddLowPass(u32),
     AddHighPass(u32),
     AddCompressor(u32),
+    AddSidechain(u32),
     AddReverb(u32),
     ClearInserts(u32),
     UpdateInsert(crate::audio_bridge::BusInsertInfo),
@@ -119,6 +120,9 @@ impl ProfilerPanel {
                 if ui.small_button("Comp").clicked() {
                     action = ProfilerAction::AddCompressor(b.id);
                 }
+                if ui.small_button("SC").on_hover_text("Side-chain from SFX").clicked() {
+                    action = ProfilerAction::AddSidechain(b.id);
+                }
                 if ui.small_button("Rev").clicked() {
                     action = ProfilerAction::AddReverb(b.id);
                 }
@@ -153,7 +157,7 @@ impl ProfilerPanel {
                                 action = ProfilerAction::UpdateInsert(info);
                             }
                         }
-                        "Compressor" => {
+                        "Compressor" | "Sidechain" => {
                             if ui
                                 .add(egui::DragValue::new(&mut info.p0).speed(0.5).range(-60.0..=0.0).suffix(" thr"))
                                 .changed()
@@ -252,16 +256,12 @@ impl ProfilerPanel {
                     .desired_width(90.0)
                     .hint_text("name"),
             );
-            if ui
-                .button("Save FX")
-                .on_hover_text("Save current bus inserts as preset")
-                .clicked()
-            {
+            if ui.button("Save FX").clicked() {
                 action = ProfilerAction::SaveFxPreset;
             }
         });
         if fx_preset_names.is_empty() {
-            ui.weak("No FX presets — add LP/Rev then Save FX");
+            ui.weak("No FX presets");
         } else {
             for name in fx_preset_names {
                 ui.horizontal(|ui| {
