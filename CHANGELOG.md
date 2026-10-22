@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Renzora native plugin** — `renzora_plugin/` (`renzora_ramod`, marketplace id `ramod`,
+  Runtime scope): wraps `bevy_ramod` via `RamodRenzoraPlugin` for SDK/marketplace install.
 - **Renzora integration** (`bevy_ramod` feature `renzora`, Bevy **0.19**):
   `replace_renzora_audio_with_ramod`, `RamodRenzoraBackend`, shared bus keys,
   zero-glue Backend reference in `docs/renzora_backend_glue.rs`, guide

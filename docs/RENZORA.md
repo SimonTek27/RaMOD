@@ -1,13 +1,13 @@
 # RaMOD × Renzora Engine
 
-**Status:** complete for Bevy **0.19** — Option A (replace Kira) + Option B (Backend glue) — 2026-10-22
+**Status:** complete for Bevy **0.19** — Option A/B + native plugin `renzora_plugin/` (marketplace id `ramod`) — 2026-10-22
 
 [Renzora Engine](https://github.com/renzora/engine) is a modular 2D/3D game engine on **Bevy 0.19**. Default audio is Kira (`renzora_audio` + `renzora::audio_backend::Backend`).
 
 RaMOD is an FMOD-class open-source stack. Integration is **optional** and **one-way**:
 
 ```
-Renzora game / plugin  ──depends on──►  bevy_ramod (feature = "renzora")
+Renzora game / plugin  ──depends on──▶  bevy_ramod (feature = "renzora")
                                               │
                                               ▼
                                        ramod_runtime (cpal)
@@ -109,6 +109,25 @@ app.add_ramod_audio_backend(true)?;
 
 ---
 
+## Native plugin / marketplace (`renzora_plugin/`)
+
+Ship RaMOD as a Renzora **native plugin** (dylib, compiled by the SDK):
+
+| Field | Value |
+|-------|--------|
+| Crate folder | [`renzora_plugin/`](../renzora_plugin/) |
+| Package name | `renzora_ramod` |
+| Marketplace id | `ramod` |
+| Scope | **Runtime** (editor + game exports) |
+| Entry | `RamodRenzoraPlugin` → `replace_renzora_audio_with_ramod()` |
+
+```sh
+# local: symlink into engine plugins dir, or install from marketplace when published
+# renzora publish   # maintainers
+```
+
+See [`renzora_plugin/README.md`](../renzora_plugin/README.md). Do **not** `cargo build` that folder against crates.io Bevy.
+
 ## Follow-ups
 
 - [x] Bevy 0.19 alignment
@@ -116,4 +135,5 @@ app.add_ramod_audio_backend(true)?;
 - [x] `RamodRenzoraBackend` + bus constants
 - [x] `replace_renzora_audio_with_ramod`
 - [x] Zero-glue reference (`renzora_backend_glue.rs`)
-- [ ] Optional published marketplace plugin (when Renzora plugin packaging stabilizes)
+- [x] Native plugin crate `renzora_plugin/` (marketplace id `ramod`, Runtime)
+- [ ] Publish to Renzora marketplace (`renzora publish` with credentials)
