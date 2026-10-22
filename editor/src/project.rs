@@ -1,4 +1,4 @@
-//! S3.1 / S5 / S7.15 — Project model: events, banks, assets, tracks, FX presets.
+//! S3.1 / S5 / S7 — Project model: events, banks, assets, tracks, FX presets.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,9 @@ pub struct FxInsertSpec {
     pub p1: f32,
     #[serde(default)]
     pub p2: f32,
+    /// Side-chain key bus (empty = SFX default).
+    #[serde(default)]
+    pub source_bus: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,14 +66,26 @@ pub struct EventEntry {
     pub output_bus: String,
 }
 
-fn default_output_bus() -> String { "SFX".into() }
-fn default_priority() -> i32 { 128 }
-fn default_min_dist() -> f32 { 1.0 }
-fn default_max_dist() -> f32 { 50.0 }
-fn default_event_len() -> f32 { 4.0 }
+fn default_output_bus() -> String {
+    "SFX".into()
+}
+fn default_priority() -> i32 {
+    128
+}
+fn default_min_dist() -> f32 {
+    1.0
+}
+fn default_max_dist() -> f32 {
+    50.0
+}
+fn default_event_len() -> f32 {
+    4.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BankEntry { pub name: String }
+pub struct BankEntry {
+    pub name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
@@ -92,7 +107,12 @@ pub struct TrackEntry {
 
 impl TrackEntry {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), instruments: Vec::new(), mute: false, solo: false }
+        Self {
+            name: name.into(),
+            instruments: Vec::new(),
+            mute: false,
+            solo: false,
+        }
     }
 }
 
@@ -110,8 +130,12 @@ pub struct InstrumentEntry {
     pub looping: bool,
 }
 
-fn default_inst_len() -> f32 { 0.5 }
-fn default_prob() -> f32 { 1.0 }
+fn default_inst_len() -> f32 {
+    0.5
+}
+fn default_prob() -> f32 {
+    1.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationEntry {
@@ -121,7 +145,10 @@ pub struct AutomationEntry {
 
 impl AutomationEntry {
     pub fn intensity_fade(start: f32, end: f32, t_end: f32) -> Self {
-        Self { parameter: "Intensity".into(), keys: vec![(0.0, start), (t_end, end)] }
+        Self {
+            parameter: "Intensity".into(),
+            keys: vec![(0.0, start), (t_end, end)],
+        }
     }
 }
 
@@ -200,7 +227,9 @@ impl Default for Project {
                     output_bus: "SFX".into(),
                 },
             ],
-            banks: vec![BankEntry { name: "Master".into() }],
+            banks: vec![BankEntry {
+                name: "Master".into(),
+            }],
             assets: vec![AssetEntry {
                 name: "demo_beep".into(),
                 source_path: None,
@@ -220,7 +249,11 @@ impl Project {
     pub fn add_event(&mut self, path: String) {
         self.events.push(EventEntry {
             path,
-            bank: self.banks.first().map(|b| b.name.clone()).unwrap_or_else(|| "Master".into()),
+            bank: self
+                .banks
+                .first()
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "Master".into()),
             asset_index: None,
             looping: false,
             is_3d: false,
@@ -263,7 +296,11 @@ impl Project {
     }
 
     pub fn add_asset_file(&mut self, path: &Path) -> usize {
-        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("asset").to_string();
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("asset")
+            .to_string();
         self.assets.push(AssetEntry {
             name,
             source_path: Some(path.display().to_string()),
@@ -272,9 +309,17 @@ impl Project {
         self.assets.len() - 1
     }
 
-    pub fn assign_asset_to_event(&mut self, event_index: usize, asset_index: usize) -> Result<(), String> {
-        if event_index >= self.events.len() { return Err("invalid event".into()); }
-        if asset_index >= self.assets.len() { return Err("invalid asset".into()); }
+    pub fn assign_asset_to_event(
+        &mut self,
+        event_index: usize,
+        asset_index: usize,
+    ) -> Result<(), String> {
+        if event_index >= self.events.len() {
+            return Err("invalid event".into());
+        }
+        if asset_index >= self.assets.len() {
+            return Err("invalid asset".into());
+        }
         self.events[event_index].asset_index = Some(asset_index);
         if let Some(track) = self.events[event_index].tracks.first_mut() {
             if let Some(inst) = track.instruments.first_mut() {
@@ -287,16 +332,24 @@ impl Project {
     pub fn export_bank_build(&self, bank_name: &str, out_dir: &Path) -> Result<PathBuf, String> {
         let bank_dir = out_dir.join(bank_name);
         std::fs::create_dir_all(&bank_dir).map_err(|e| e.to_string())?;
-        let events: Vec<_> = self.events.iter().filter(|e| e.bank == bank_name).map(|e| {
-            serde_json::json!({
-                "path": e.path,
-                "asset": e.asset_index.and_then(|i| self.assets.get(i).map(|a| a.name.clone())),
-                "output_bus": e.output_bus,
-                "is_3d": e.is_3d,
-                "looping": e.looping,
+        let events: Vec<_> = self
+            .events
+            .iter()
+            .filter(|e| e.bank == bank_name)
+            .map(|e| {
+                serde_json::json!({
+                    "path": e.path,
+                    "asset": e.asset_index.and_then(|i| self.assets.get(i).map(|a| a.name.clone())),
+                    "output_bus": e.output_bus,
+                    "is_3d": e.is_3d,
+                    "looping": e.looping,
+                })
             })
-        }).collect();
-        let manifest = serde_json::json!({ "bank": bank_name, "events": events });
+            .collect();
+        let manifest = serde_json::json!({
+            "bank": bank_name,
+            "events": events,
+        });
         let manifest_path = bank_dir.join("bank.json");
         let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
         std::fs::write(&manifest_path, json).map_err(|e| e.to_string())?;
