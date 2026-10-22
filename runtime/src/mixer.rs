@@ -240,6 +240,13 @@ impl Mixer {
         let mut ids: Vec<u32> = self.buses.keys().copied().collect();
         ids.sort_unstable();
 
+        // Snapshot all bus buffers up-front for side-chain keys (borrow-safe).
+        let buf_by_name: HashMap<String, Vec<f32>> = self
+            .buses
+            .values()
+            .map(|b| (b.name.clone(), b.buffer.clone()))
+            .collect();
+
         for id in ids.iter().rev() {
             if *id == self.master_id.0 {
                 continue;
@@ -260,33 +267,15 @@ impl Mixer {
                 while bus.effect_state.len() < inserts.len() {
                     bus.effect_state.push(EffectState::default());
                 }
-                let sc_keys: Vec<(usize, String)> = inserts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, fx)| match fx {
-                        InsertEffect::SidechainCompressor { source_bus, .. } => {
-                            Some((i, source_bus.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let key_bufs: Vec<(usize, Vec<f32>)> = sc_keys
-                    .iter()
-                    .filter_map(|(i, name)| {
-                        let src = self.find_by_name(name)?;
-                        let buf = self.buses.get(&src.0)?.buffer.clone();
-                        Some((*i, buf))
-                    })
-                    .collect();
-                for (idx, (fx, st)) in inserts.iter().zip(bus.effect_state.iter_mut()).enumerate() {
+                for (fx, st) in inserts.iter().zip(bus.effect_state.iter_mut()) {
                     if let InsertEffect::SidechainCompressor {
                         threshold_db,
                         ratio,
                         makeup_db,
-                        ..
+                        source_bus,
                     } = fx
                     {
-                        if let Some((_, key)) = key_bufs.iter().find(|(i, _)| *i == idx) {
+                        if let Some(key) = buf_by_name.get(source_bus) {
                             process_sidechain(
                                 &mut bus.buffer,
                                 key,
@@ -323,33 +312,15 @@ impl Mixer {
             while master.effect_state.len() < inserts.len() {
                 master.effect_state.push(EffectState::default());
             }
-            let sc_keys: Vec<(usize, String)> = inserts
-                .iter()
-                .enumerate()
-                .filter_map(|(i, fx)| match fx {
-                    InsertEffect::SidechainCompressor { source_bus, .. } => {
-                        Some((i, source_bus.clone()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            let key_bufs: Vec<(usize, Vec<f32>)> = sc_keys
-                .iter()
-                .filter_map(|(i, name)| {
-                    let src = self.find_by_name(name)?;
-                    let buf = self.buses.get(&src.0)?.buffer.clone();
-                    Some((*i, buf))
-                })
-                .collect();
-            for (idx, (fx, st)) in inserts.iter().zip(master.effect_state.iter_mut()).enumerate() {
+            for (fx, st) in inserts.iter().zip(master.effect_state.iter_mut()) {
                 if let InsertEffect::SidechainCompressor {
                     threshold_db,
                     ratio,
                     makeup_db,
-                    ..
+                    source_bus,
                 } = fx
                 {
-                    if let Some((_, key)) = key_bufs.iter().find(|(i, _)| *i == idx) {
+                    if let Some(key) = buf_by_name.get(source_bus) {
                         process_sidechain(
                             &mut master.buffer,
                             key,
