@@ -17,8 +17,8 @@
 //!
 //! ## Renzora
 //!
-//! Enable feature `renzora` for host markers and setup helpers. See [`renzora`]
-//! and `docs/RENZORA.md`.
+//! Enable feature `renzora` for host markers, **replace Kira**, and
+//! [`renzora::backend::RamodRenzoraBackend`]. See `docs/RENZORA.md`.
 
 mod assets;
 mod components;
