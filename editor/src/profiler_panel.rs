@@ -1,4 +1,4 @@
-//! S7 — Profiler panel (CPU, buses, FX, side-chain, snapshots, 3D Doppler).
+//! S7 — Profiler panel (CPU, buses, FX, side-chain key, snapshots, 3D).
 
 use eframe::egui;
 
@@ -120,7 +120,7 @@ impl ProfilerPanel {
                 if ui.small_button("Comp").clicked() {
                     action = ProfilerAction::AddCompressor(b.id);
                 }
-                if ui.small_button("SC").on_hover_text("Side-chain from SFX").clicked() {
+                if ui.small_button("SC").on_hover_text("Side-chain (pick key bus)").clicked() {
                     action = ProfilerAction::AddSidechain(b.id);
                 }
                 if ui.small_button("Rev").clicked() {
@@ -157,7 +157,7 @@ impl ProfilerPanel {
                                 action = ProfilerAction::UpdateInsert(info);
                             }
                         }
-                        "Compressor" | "Sidechain" => {
+                        "Compressor" => {
                             if ui
                                 .add(egui::DragValue::new(&mut info.p0).speed(0.5).range(-60.0..=0.0).suffix(" thr"))
                                 .changed()
@@ -176,6 +176,44 @@ impl ProfilerPanel {
                             {
                                 action = ProfilerAction::UpdateInsert(info);
                             }
+                        }
+                        "Sidechain" => {
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p0).speed(0.5).range(-60.0..=0.0).suffix(" thr"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p1).speed(0.1).range(1.0..=20.0).suffix(":1"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            if ui
+                                .add(egui::DragValue::new(&mut info.p2).speed(0.25).range(0.0..=24.0).suffix(" mk"))
+                                .changed()
+                            {
+                                action = ProfilerAction::UpdateInsert(info.clone());
+                            }
+                            let keys = ["SFX", "Music", "Master"];
+                            let mut key = if info.source_bus.is_empty() {
+                                "SFX".to_string()
+                            } else {
+                                info.source_bus.clone()
+                            };
+                            egui::ComboBox::from_id_salt(format!("sc_key_{}_{}", ins.bus_id, ins.index))
+                                .selected_text(format!("key:{key}"))
+                                .width(72.0)
+                                .show_ui(ui, |ui| {
+                                    for k in keys {
+                                        if ui.selectable_label(key == k, k).clicked() {
+                                            key = k.to_string();
+                                            info.source_bus = key.clone();
+                                            action = ProfilerAction::UpdateInsert(info.clone());
+                                        }
+                                    }
+                                });
                         }
                         "Reverb" => {
                             if ui
