@@ -1,0 +1,145 @@
+
+    pub fn render(&mut self, out: &mut [f32]) {
+        let t0 = std::time::Instant::now();
+        self.sync_event_spatial_gains();
+        self.snapshots.apply(&mut self.mixer);
+        let ch = self.channels as usize;
+        if ch == 0 || out.len() % ch != 0 {
+            out.fill(0.0);
+            return;
+        }
+        let frames = out.len() / ch;
+        self.mixer.prepare(frames, ch);
+        {
+            let mixer = &mut self.mixer;
+            let rate = self.sample_rate;
+            let buffers = &self.buffers;
+            self.voices.mix_each(frames, ch, rate, buffers, |voice_id, slice| {
+                mixer.accumulate_voice(voice_id, slice);
+            });
+        }
+        self.mixer.finish(out, ch, self.sample_rate);
+        let g = self.master.gain();
+        if (g - 1.0).abs() > f32::EPSILON {
+            for s in out.iter_mut() {
+                *s *= g;
+            }
+        }
+        self.last_render_us = t0.elapsed().as_micros().min(u128::from(u32::MAX)) as u32;
+        self.spectrum.analyze(out, ch);
+        self.capture_profiler_frame();
+        if let Some(ref backend) = self.backend {
+            backend.push_samples(out);
+        }
+    }
+
+    pub fn profiler_enable(&mut self, on: bool) {
+        self.profiler.enable(on);
+    }
+    pub fn profiler_clear(&mut self) {
+        self.profiler.clear();
+    }
+    pub fn profiler_session(&self) -> &crate::profiler::ProfilerSession {
+        &self.profiler
+    }
+    pub fn profiler_latest(&self) -> Option<&crate::profiler::ProfilerFrame> {
+        self.profiler.latest()
+    }
+    pub fn spectrum(&self) -> &crate::profiler::SpectrumAnalyzer {
+        &self.spectrum
+    }
+    pub fn last_render_cpu_us(&self) -> u32 {
+        self.last_render_us
+    }
+
+    fn capture_profiler_frame(&mut self) {
+        if !self.profiler.is_enabled() {
+            return;
+        }
+        let master = self.mixer.master_id();
+        let (peak, rms) = self
+            .mixer
+            .bus(master)
+            .map(|b| (b.meter.peak, b.meter.rms))
+            .unwrap_or((0.0, 0.0));
+        let mut playing_events = Vec::new();
+        let mut params = Vec::new();
+        let mut emitters = Vec::new();
+        for id in 1..1024u64 {
+            let Some(inst) = self.events.instance(id) else {
+                continue;
+            };
+            if !inst.is_playing() && !inst.started {
+                continue;
+            }
+            let path = inst.path().as_str().to_string();
+            playing_events.push(path.clone());
+            if let Some(v) = inst.get_parameter("Intensity") {
+                params.push((path.clone(), "Intensity".into(), v));
+            }
+            if inst.is_3d {
+                let a = inst.attributes();
+                let listener = self.events.listener();
+                let d = crate::spatial::distance(&listener, &a);
+                let aud = inst.attenuation.gain_at(d) * inst.gain_user;
+                emitters.push(crate::profiler::EmitterDebug {
+                    position: a.position,
+                    velocity: a.velocity,
+                    audibility: aud,
+                });
+            }
+        }
+        if playing_events.len() > 16 {
+            playing_events.truncate(16);
+        }
+        self.profiler.push(crate::profiler::ProfilerFrame {
+            index: 0,
+            time: 0.0,
+            cpu_render_us: self.last_render_us,
+            active_voices: self.voices.active_count(),
+            active_instances: self.events.instance_count(),
+            master_peak: peak,
+            master_rms: rms,
+            playing_events,
+            params,
+            emitters,
+        });
+    }
+
+    pub fn render_seconds(&mut self, seconds: f32) -> Vec<f32> {
+        let frames = (seconds * self.sample_rate as f32).max(0.0) as usize;
+        let mut out = vec![0.0f32; frames * self.channels as usize];
+        self.render(&mut out);
+        out
+    }
+
+    pub fn register_event(&mut self, desc: EventDescription) {
+        self.events.register(desc);
+    }
+
+    pub fn register_designed_event(
+        &mut self,
+        event: DesignedEvent,
+        buffers: &[BufferHandle],
+    ) -> Result<(), RuntimeError> {
+        let primary = event
+            .tracks
+            .iter()
+            .flat_map(|t| t.instruments.iter())
+            .find(|i| !i.buffer_slots.is_empty())
+            .and_then(|i| i.buffer_slots.first().copied())
+            .and_then(|slot| buffers.get(slot).copied())
+            .ok_or(RuntimeError::InvalidBuffer)?;
+        let mut desc = EventDescription::new(&event.path, primary)
+            .with_priority(event.priority)
+            .with_loop(
+                event
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.instruments.iter())
+                    .any(|i| i.looping),
+            )
+            .with_output_bus(event.output_bus.clone());
+        if event.is_3d {
+            desc = desc.with_3d(event.attenuation);
+        }
