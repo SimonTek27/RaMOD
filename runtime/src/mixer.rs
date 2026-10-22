@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::dsp::{EffectState, InsertEffect};
+use crate::dsp::{process_sidechain, EffectState, InsertEffect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BusId(pub u32);
@@ -260,8 +260,46 @@ impl Mixer {
                 while bus.effect_state.len() < inserts.len() {
                     bus.effect_state.push(EffectState::default());
                 }
-                for (fx, st) in inserts.iter().zip(bus.effect_state.iter_mut()) {
-                    fx.process(&mut bus.buffer, channels, sample_rate, st);
+                let sc_keys: Vec<(usize, String)> = inserts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, fx)| match fx {
+                        InsertEffect::SidechainCompressor { source_bus, .. } => {
+                            Some((i, source_bus.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let key_bufs: Vec<(usize, Vec<f32>)> = sc_keys
+                    .iter()
+                    .filter_map(|(i, name)| {
+                        let src = self.find_by_name(name)?;
+                        let buf = self.buses.get(&src.0)?.buffer.clone();
+                        Some((*i, buf))
+                    })
+                    .collect();
+                for (idx, (fx, st)) in inserts.iter().zip(bus.effect_state.iter_mut()).enumerate() {
+                    if let InsertEffect::SidechainCompressor {
+                        threshold_db,
+                        ratio,
+                        makeup_db,
+                        ..
+                    } = fx
+                    {
+                        if let Some((_, key)) = key_bufs.iter().find(|(i, _)| *i == idx) {
+                            process_sidechain(
+                                &mut bus.buffer,
+                                key,
+                                *threshold_db,
+                                *ratio,
+                                *makeup_db,
+                                st,
+                                sample_rate,
+                            );
+                        }
+                    } else {
+                        fx.process(&mut bus.buffer, channels, sample_rate, st);
+                    }
                 }
                 bus.meter.update(&bus.buffer);
                 (bus.parent, bus.buffer.clone(), silenced)
@@ -285,8 +323,46 @@ impl Mixer {
             while master.effect_state.len() < inserts.len() {
                 master.effect_state.push(EffectState::default());
             }
-            for (fx, st) in inserts.iter().zip(master.effect_state.iter_mut()) {
-                fx.process(&mut master.buffer, channels, sample_rate, st);
+            let sc_keys: Vec<(usize, String)> = inserts
+                .iter()
+                .enumerate()
+                .filter_map(|(i, fx)| match fx {
+                    InsertEffect::SidechainCompressor { source_bus, .. } => {
+                        Some((i, source_bus.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let key_bufs: Vec<(usize, Vec<f32>)> = sc_keys
+                .iter()
+                .filter_map(|(i, name)| {
+                    let src = self.find_by_name(name)?;
+                    let buf = self.buses.get(&src.0)?.buffer.clone();
+                    Some((*i, buf))
+                })
+                .collect();
+            for (idx, (fx, st)) in inserts.iter().zip(master.effect_state.iter_mut()).enumerate() {
+                if let InsertEffect::SidechainCompressor {
+                    threshold_db,
+                    ratio,
+                    makeup_db,
+                    ..
+                } = fx
+                {
+                    if let Some((_, key)) = key_bufs.iter().find(|(i, _)| *i == idx) {
+                        process_sidechain(
+                            &mut master.buffer,
+                            key,
+                            *threshold_db,
+                            *ratio,
+                            *makeup_db,
+                            st,
+                            sample_rate,
+                        );
+                    }
+                } else {
+                    fx.process(&mut master.buffer, channels, sample_rate, st);
+                }
             }
             master.meter.update(&master.buffer);
             let n = out.len().min(master.buffer.len());
