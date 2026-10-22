@@ -1,4 +1,4 @@
-//! S3.1 / S5 / S7 — Project model: events, banks, assets, tracks, FX presets.
+//! S3.1 / S5 / S7 — Project model: events, banks, assets, tracks, FX, AHDSR.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,6 @@ pub struct FxInsertSpec {
     pub p1: f32,
     #[serde(default)]
     pub p2: f32,
-    /// Side-chain key bus (empty = SFX default).
     #[serde(default)]
     pub source_bus: String,
 }
@@ -128,6 +127,16 @@ pub struct InstrumentEntry {
     pub probability: f32,
     #[serde(default)]
     pub looping: bool,
+    #[serde(default)]
+    pub attack: f32,
+    #[serde(default)]
+    pub hold: f32,
+    #[serde(default)]
+    pub decay: f32,
+    #[serde(default = "default_sustain")]
+    pub sustain: f32,
+    #[serde(default = "default_release")]
+    pub release: f32,
 }
 
 fn default_inst_len() -> f32 {
@@ -135,6 +144,12 @@ fn default_inst_len() -> f32 {
 }
 fn default_prob() -> f32 {
     1.0
+}
+fn default_sustain() -> f32 {
+    1.0
+}
+fn default_release() -> f32 {
+    0.05
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +200,11 @@ impl Default for Project {
                             length: 0.5,
                             probability: 1.0,
                             looping: false,
+                            attack: 0.0,
+                            hold: 0.0,
+                            decay: 0.0,
+                            sustain: 1.0,
+                            release: 0.05,
                         }],
                         mute: false,
                         solo: false,
@@ -217,6 +237,11 @@ impl Default for Project {
                             length: 1.0,
                             probability: 1.0,
                             looping: true,
+                            attack: 0.0,
+                            hold: 0.0,
+                            decay: 0.0,
+                            sustain: 1.0,
+                            release: 0.05,
                         }],
                         mute: false,
                         solo: false,
@@ -291,6 +316,11 @@ impl Project {
             length: 0.5,
             probability: 1.0,
             looping: false,
+            attack: 0.0,
+            hold: 0.0,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.05,
         });
         Ok(())
     }
