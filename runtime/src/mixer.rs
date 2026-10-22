@@ -1,4 +1,4 @@
-//! Hierarchical mixer with bus meters, voice routing, and inserts.
+//! Hierarchical mixer with bus meters, voice routing, inserts, and send/return.
 
 use std::collections::HashMap;
 
@@ -43,6 +43,14 @@ impl Meter {
     }
 }
 
+/// Aux send to a return (or any) bus.
+#[derive(Debug, Clone)]
+pub struct BusSend {
+    pub target: BusId,
+    /// Linear send amount 0..=1.
+    pub level: f32,
+}
+
 #[derive(Debug)]
 pub struct Bus {
     pub id: BusId,
@@ -51,7 +59,10 @@ pub struct Bus {
     pub volume_db: f32,
     pub mute: bool,
     pub solo: bool,
+    /// True for return/aux buses (processed after source buses).
+    pub is_return: bool,
     pub inserts: Vec<InsertEffect>,
+    pub sends: Vec<BusSend>,
     pub meter: Meter,
     pub(crate) buffer: Vec<f32>,
     pub(crate) effect_state: Vec<EffectState>,
@@ -66,7 +77,9 @@ impl Bus {
             volume_db: 0.0,
             mute: false,
             solo: false,
+            is_return: false,
             inserts: Vec::new(),
+            sends: Vec::new(),
             meter: Meter::default(),
             buffer: Vec::new(),
             effect_state: Vec::new(),
@@ -102,7 +115,25 @@ impl Mixer {
         };
         m.buses.insert(0, Bus::new(BusId(0), "Master", None));
         let sfx = m.add_bus("SFX", Some(BusId(0)));
-        let _music = m.add_bus("Music", Some(BusId(0)));
+        let music = m.add_bus("Music", Some(BusId(0)));
+        let reverb = m.add_bus("Reverb", Some(BusId(0)));
+        if let Some(b) = m.buses.get_mut(&reverb.0) {
+            b.is_return = true;
+            b.inserts.push(InsertEffect::reverb(55.0, 0.4, 0.35));
+            b.effect_state.push(EffectState::default());
+        }
+        if let Some(b) = m.buses.get_mut(&sfx.0) {
+            b.sends.push(BusSend {
+                target: reverb,
+                level: 0.0,
+            });
+        }
+        if let Some(b) = m.buses.get_mut(&music.0) {
+            b.sends.push(BusSend {
+                target: reverb,
+                level: 0.0,
+            });
+        }
         m.default_bus = sfx;
         m
     }
@@ -161,6 +192,45 @@ impl Mixer {
 
     pub fn any_solo(&self) -> bool {
         self.buses.values().any(|b| b.solo)
+    }
+
+    /// Set linear send level (0..=1) from `from` to bus named `target_name`.
+    pub fn set_send_level(&mut self, from: BusId, target_name: &str, level: f32) {
+        let level = level.clamp(0.0, 1.0);
+        let Some(target) = self.find_by_name(target_name) else {
+            return;
+        };
+        if let Some(b) = self.buses.get_mut(&from.0) {
+            if let Some(s) = b.sends.iter_mut().find(|s| s.target == target) {
+                s.level = level;
+            } else {
+                b.sends.push(BusSend { target, level });
+            }
+        }
+    }
+
+    pub fn send_level(&self, from: BusId, target_name: &str) -> f32 {
+        let Some(target) = self.find_by_name(target_name) else {
+            return 0.0;
+        };
+        self.buses
+            .get(&from.0)
+            .and_then(|b| b.sends.iter().find(|s| s.target == target).map(|s| s.level))
+            .unwrap_or(0.0)
+    }
+
+    pub fn list_sends(&self, from: BusId) -> Vec<(String, f32)> {
+        let Some(b) = self.buses.get(&from.0) else {
+            return Vec::new();
+        };
+        b.sends
+            .iter()
+            .filter_map(|s| {
+                self.buses
+                    .get(&s.target.0)
+                    .map(|tb| (tb.name.clone(), s.level))
+            })
+            .collect()
     }
 
     pub fn add_insert(&mut self, id: BusId, effect: InsertEffect) {
@@ -237,21 +307,27 @@ impl Mixer {
 
     pub fn finish(&mut self, out: &mut [f32], channels: usize, sample_rate: u32) {
         let any_solo = self.any_solo();
-        let mut ids: Vec<u32> = self.buses.keys().copied().collect();
-        ids.sort_unstable();
+        let master_id = self.master_id.0;
 
-        // Snapshot all bus buffers up-front for side-chain keys (borrow-safe).
         let buf_by_name: HashMap<String, Vec<f32>> = self
             .buses
             .values()
             .map(|b| (b.name.clone(), b.buffer.clone()))
             .collect();
 
-        for id in ids.iter().rev() {
-            if *id == self.master_id.0 {
-                continue;
-            }
-            let (parent, buf_copy, _silenced) = {
+        // Pass 1: source buses
+        let mut source_ids: Vec<u32> = self
+            .buses
+            .values()
+            .filter(|b| b.id.0 != master_id && !b.is_return)
+            .map(|b| b.id.0)
+            .collect();
+        source_ids.sort_unstable();
+
+        let mut pending_sends: Vec<(u32, Vec<f32>)> = Vec::new();
+
+        for id in &source_ids {
+            let (parent, buf_copy, sends) = {
                 let Some(bus) = self.buses.get_mut(id) else {
                     continue;
                 };
@@ -291,7 +367,87 @@ impl Mixer {
                     }
                 }
                 bus.meter.update(&bus.buffer);
-                (bus.parent, bus.buffer.clone(), silenced)
+                let sends = bus.sends.clone();
+                (bus.parent, bus.buffer.clone(), sends)
+            };
+
+            for s in &sends {
+                if s.level > 1e-6 {
+                    let wet: Vec<f32> = buf_copy.iter().map(|x| x * s.level).collect();
+                    pending_sends.push((s.target.0, wet));
+                }
+            }
+
+            if let Some(pid) = parent {
+                if let Some(p) = self.buses.get_mut(&pid.0) {
+                    let n = p.buffer.len().min(buf_copy.len());
+                    for i in 0..n {
+                        p.buffer[i] += buf_copy[i];
+                    }
+                }
+            }
+        }
+
+        for (tid, wet) in pending_sends {
+            if let Some(tb) = self.buses.get_mut(&tid) {
+                let n = tb.buffer.len().min(wet.len());
+                for i in 0..n {
+                    tb.buffer[i] += wet[i];
+                }
+            }
+        }
+
+        // Pass 2: return buses
+        let mut return_ids: Vec<u32> = self
+            .buses
+            .values()
+            .filter(|b| b.is_return)
+            .map(|b| b.id.0)
+            .collect();
+        return_ids.sort_unstable();
+
+        for id in &return_ids {
+            let (parent, buf_copy) = {
+                let Some(bus) = self.buses.get_mut(id) else {
+                    continue;
+                };
+                let silenced = any_solo && !bus.solo;
+                if silenced {
+                    bus.buffer.fill(0.0);
+                }
+                let vol = bus.volume_linear();
+                for s in bus.buffer.iter_mut() {
+                    *s *= vol;
+                }
+                let inserts = bus.inserts.clone();
+                while bus.effect_state.len() < inserts.len() {
+                    bus.effect_state.push(EffectState::default());
+                }
+                for (fx, st) in inserts.iter().zip(bus.effect_state.iter_mut()) {
+                    if let InsertEffect::SidechainCompressor {
+                        threshold_db,
+                        ratio,
+                        makeup_db,
+                        source_bus,
+                    } = fx
+                    {
+                        if let Some(key) = buf_by_name.get(source_bus) {
+                            process_sidechain(
+                                &mut bus.buffer,
+                                key,
+                                *threshold_db,
+                                *ratio,
+                                *makeup_db,
+                                st,
+                                sample_rate,
+                            );
+                        }
+                    } else {
+                        fx.process(&mut bus.buffer, channels, sample_rate, st);
+                    }
+                }
+                bus.meter.update(&bus.buffer);
+                (bus.parent, bus.buffer.clone())
             };
             if let Some(pid) = parent {
                 if let Some(p) = self.buses.get_mut(&pid.0) {
@@ -303,7 +459,8 @@ impl Mixer {
             }
         }
 
-        if let Some(master) = self.buses.get_mut(&self.master_id.0) {
+        // Master
+        if let Some(master) = self.buses.get_mut(&master_id) {
             let vol = master.volume_linear();
             for s in master.buffer.iter_mut() {
                 *s *= vol;
@@ -398,7 +555,7 @@ impl SnapshotPlayer {
     }
 
     pub fn active_name(&self) -> Option<&str> {
-        self.active.as_ref().map(|(n, _)| n.as_str())
+        self.active.as_ref().map(|(n)| n.as_str())
     }
 
     pub fn active_weight(&self) -> f32 {
