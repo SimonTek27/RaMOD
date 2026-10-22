@@ -1,10 +1,10 @@
-//! Multi-track Event Editor panel (timeline, tracks, instruments, markers, automation).
+//! Multi-track Event Editor panel (timeline, tracks, instruments, AHDSR, markers).
 
 use eframe::egui;
 
 use crate::project::{EventEntry, Project};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EventEditorState {
     pub selected_track: Option<usize>,
     pub selected_instrument: Option<(usize, usize)>,
@@ -13,7 +13,6 @@ pub struct EventEditorState {
     pub marker_target: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventEditorAction {
     None,
     Changed,
@@ -21,8 +20,7 @@ pub enum EventEditorAction {
 
 pub fn ensure_default_track(ev: &mut EventEntry) {
     if ev.tracks.is_empty() {
-        let _ = ev;
-        // Project helpers add tracks; UI can request + Track
+        ev.tracks.push(crate::project::TrackEntry::new("Audio 1"));
     }
 }
 
@@ -33,9 +31,6 @@ pub fn show_event_editor(
     state: &mut EventEditorState,
 ) -> EventEditorAction {
     let mut dirty = false;
-    if project.events.get(event_index).is_none() {
-        return EventEditorAction::None;
-    }
 
     ui.heading("Event Editor");
     if let Some(e) = project.events.get(event_index) {
@@ -89,7 +84,6 @@ pub fn show_event_editor(
 
     ui.separator();
 
-    // Timeline strip (simplified)
     let length = project
         .events
         .get(event_index)
@@ -111,8 +105,8 @@ pub fn show_event_editor(
     }
 
     let timeline_h = (track_count as f32 * 36.0).clamp(80.0, 280.0);
-    let (rect, _resp) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), timeline_h), egui::Sense::hover());
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), timeline_h), egui::Sense::click());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(32, 32, 36));
 
@@ -132,23 +126,164 @@ pub fn show_event_editor(
                 egui::FontId::proportional(12.0),
                 egui::Color32::LIGHT_GRAY,
             );
-            for inst in &track.instruments {
+            for (ii, inst) in track.instruments.iter().enumerate() {
                 let x0 = row.left() + (inst.start_time / length) * row.width();
                 let w = ((inst.length.max(0.05) / length) * row.width()).max(8.0);
                 let ir = egui::Rect::from_min_size(
                     egui::pos2(x0, y0 + 14.0),
                     egui::vec2(w, row_h - 18.0),
                 );
-                painter.rect_filled(ir, 2.0, egui::Color32::from_rgb(70, 120, 180));
+                let selected = state.selected_instrument == Some((ti, ii));
+                let color = if selected {
+                    egui::Color32::from_rgb(100, 180, 255)
+                } else {
+                    egui::Color32::from_rgb(70, 120, 180)
+                };
+                painter.rect_filled(ir, 2.0, color);
             }
         }
-        // Markers
         for m in &ev.markers {
             let x = rect.left() + (m.time / length) * rect.width();
             painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(220, 200, 60)),
             );
+        }
+    }
+
+    if resp.clicked() {
+        if let Some(pointer) = resp.interact_pointer_pos() {
+            if let Some(ev) = project.events.get(event_index) {
+                let row_h = rect.height() / track_count.max(1) as f32;
+                for (ti, track) in ev.tracks.iter().enumerate() {
+                    let y0 = rect.top() + ti as f32 * row_h;
+                    for (ii, inst) in track.instruments.iter().enumerate() {
+                        let x0 = rect.left() + (inst.start_time / length) * rect.width();
+                        let w = ((inst.length.max(0.05) / length) * rect.width()).max(8.0);
+                        let ir = egui::Rect::from_min_size(
+                            egui::pos2(x0, y0 + 14.0),
+                            egui::vec2(w, row_h - 18.0),
+                        );
+                        if ir.contains(pointer) {
+                            state.selected_track = Some(ti);
+                            state.selected_instrument = Some((ti, ii));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((ti, ii)) = state.selected_instrument {
+        ui.separator();
+        ui.label(format!("Instrument [{ti}:{ii}]"));
+        if let Some(ev) = project.events.get_mut(event_index) {
+            if let Some(track) = ev.tracks.get_mut(ti) {
+                if let Some(inst) = track.instruments.get_mut(ii) {
+                    ui.horizontal(|ui| {
+                        ui.label("Start");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.start_time)
+                                    .speed(0.01)
+                                    .range(0.0..=60.0)
+                                    .suffix(" s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        ui.label("Len");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.length)
+                                    .speed(0.01)
+                                    .range(0.05..=60.0)
+                                    .suffix(" s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        if ui.checkbox(&mut inst.looping, "Loop").changed() {
+                            dirty = true;
+                        }
+                        ui.label("Prob");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.probability)
+                                    .speed(0.01)
+                                    .range(0.0..=1.0),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.strong("AHDSR");
+                        ui.label("A");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.attack)
+                                    .speed(0.005)
+                                    .range(0.0..=5.0)
+                                    .suffix("s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        ui.label("H");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.hold)
+                                    .speed(0.005)
+                                    .range(0.0..=5.0)
+                                    .suffix("s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        ui.label("D");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.decay)
+                                    .speed(0.005)
+                                    .range(0.0..=5.0)
+                                    .suffix("s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        ui.label("S");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.sustain)
+                                    .speed(0.01)
+                                    .range(0.0..=1.0),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                        ui.label("R");
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inst.release)
+                                    .speed(0.005)
+                                    .range(0.0..=5.0)
+                                    .suffix("s"),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -160,7 +295,11 @@ pub fn show_event_editor(
                 .desired_width(80.0)
                 .hint_text("name"),
         );
-        ui.add(egui::DragValue::new(&mut state.marker_time).speed(0.05).prefix("t="));
+        ui.add(
+            egui::DragValue::new(&mut state.marker_time)
+                .speed(0.05)
+                .prefix("t="),
+        );
         ui.add(
             egui::TextEdit::singleline(&mut state.marker_target)
                 .desired_width(140.0)
