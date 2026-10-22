@@ -11,8 +11,10 @@ pub struct EventEditorState {
     pub marker_name: String,
     pub marker_time: f32,
     pub marker_target: String,
-    /// True while dragging a clip on the timeline.
+    /// True while dragging a clip on the timeline (move).
     pub dragging_clip: bool,
+    /// True while resizing a clip from the right edge.
+    pub resizing_clip: bool,
 }
 
 pub enum EventEditorAction {
@@ -177,17 +179,48 @@ pub fn show_event_editor(
         None
     };
 
+    const EDGE_PX: f32 = 8.0;
+
+    let hit_resize_edge = |pointer: egui::Pos2| -> Option<(usize, usize)> {
+        let Some(ev) = project.events.get(event_index) else {
+            return None;
+        };
+        let row_h = rect.height() / track_count.max(1) as f32;
+        for (ti, track) in ev.tracks.iter().enumerate() {
+            let y0 = rect.top() + ti as f32 * row_h;
+            for (ii, inst) in track.instruments.iter().enumerate() {
+                let x0 = rect.left() + (inst.start_time / length) * rect.width();
+                let w = ((inst.length.max(0.05) / length) * rect.width()).max(8.0);
+                let right = x0 + w;
+                let edge = egui::Rect::from_min_max(
+                    egui::pos2(right - EDGE_PX, y0 + 14.0),
+                    egui::pos2(right + 2.0, y0 + row_h - 4.0),
+                );
+                if edge.contains(pointer) {
+                    return Some((ti, ii));
+                }
+            }
+        }
+        None
+    };
+
     if resp.drag_started() || resp.clicked() {
         if let Some(pointer) = resp.interact_pointer_pos() {
-            if let Some((ti, ii)) = hit_instrument(pointer) {
+            if let Some((ti, ii)) = hit_resize_edge(pointer) {
+                state.selected_track = Some(ti);
+                state.selected_instrument = Some((ti, ii));
+                state.resizing_clip = resp.drag_started();
+                state.dragging_clip = false;
+            } else if let Some((ti, ii)) = hit_instrument(pointer) {
                 state.selected_track = Some(ti);
                 state.selected_instrument = Some((ti, ii));
                 state.dragging_clip = resp.drag_started();
+                state.resizing_clip = false;
             }
         }
     }
 
-    if resp.dragged() && state.dragging_clip {
+    if resp.dragged() && (state.dragging_clip || state.resizing_clip) {
         if let Some((ti, ii)) = state.selected_instrument {
             let dx = resp.drag_delta().x;
             if rect.width() > 1.0 {
@@ -195,9 +228,15 @@ pub fn show_event_editor(
                 if let Some(ev) = project.events.get_mut(event_index) {
                     if let Some(track) = ev.tracks.get_mut(ti) {
                         if let Some(inst) = track.instruments.get_mut(ii) {
-                            inst.start_time = (inst.start_time + dt).max(0.0);
-                            let max_start = (length - inst.length * 0.1).max(0.0);
-                            inst.start_time = inst.start_time.min(max_start);
+                            if state.resizing_clip {
+                                inst.length = (inst.length + dt).max(0.05);
+                                let max_len = (length - inst.start_time).max(0.05);
+                                inst.length = inst.length.min(max_len);
+                            } else {
+                                inst.start_time = (inst.start_time + dt).max(0.0);
+                                let max_start = (length - inst.length * 0.1).max(0.0);
+                                inst.start_time = inst.start_time.min(max_start);
+                            }
                             dirty = true;
                         }
                     }
@@ -208,6 +247,29 @@ pub fn show_event_editor(
 
     if resp.drag_stopped() {
         state.dragging_clip = false;
+        state.resizing_clip = false;
+    }
+
+    if let Some((ti, ii)) = state.selected_instrument {
+        if let Some(ev) = project.events.get(event_index) {
+            if let Some(track) = ev.tracks.get(ti) {
+                if let Some(inst) = track.instruments.get(ii) {
+                    let row_h = rect.height() / track_count.max(1) as f32;
+                    let y0 = rect.top() + ti as f32 * row_h;
+                    let x0 = rect.left() + (inst.start_time / length) * rect.width();
+                    let w = ((inst.length.max(0.05) / length) * rect.width()).max(8.0);
+                    let hx = x0 + w - 2.0;
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(hx, y0 + 14.0),
+                            egui::vec2(4.0, (row_h - 18.0).max(4.0)),
+                        ),
+                        1.0,
+                        egui::Color32::from_rgb(220, 230, 255),
+                    );
+                }
+            }
+        }
     }
 
     if let Some((ti, ii)) = state.selected_instrument {
@@ -323,7 +385,7 @@ pub fn show_event_editor(
         }
     }
 
-    ui.weak("Drag clips on the timeline to move · click to select");
+    ui.weak("Drag clip body to move · drag right edge to resize · click to select");
     ui.separator();
     ui.label("Markers");
     ui.horizontal(|ui| {
