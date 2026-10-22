@@ -1,4 +1,4 @@
-//! Minimal insert DSP effects (S4.3 / S7.12).
+//! Minimal insert DSP effects (S4.3 / S7.12 / S7.17).
 
 /// One insert slot on a bus.
 #[derive(Debug, Clone)]
@@ -13,6 +13,14 @@ pub enum InsertEffect {
         threshold_db: f32,
         ratio: f32,
         makeup_db: f32,
+    },
+    /// Duck this bus from another bus's envelope (side-chain).
+    /// `source_bus` is resolved by the mixer (e.g. "SFX").
+    SidechainCompressor {
+        threshold_db: f32,
+        ratio: f32,
+        makeup_db: f32,
+        source_bus: String,
     },
     /// Simple mono feedback delay (wet/dry blend).
     Reverb {
@@ -40,6 +48,20 @@ impl InsertEffect {
             threshold_db,
             ratio,
             makeup_db,
+        }
+    }
+
+    pub fn sidechain_compressor(
+        threshold_db: f32,
+        ratio: f32,
+        makeup_db: f32,
+        source_bus: impl Into<String>,
+    ) -> Self {
+        Self::SidechainCompressor {
+            threshold_db,
+            ratio,
+            makeup_db,
+            source_bus: source_bus.into(),
         }
     }
 
@@ -73,6 +95,8 @@ pub struct EffectState {
     hp_z: Vec<f32>,
     delay: Vec<f32>,
     delay_pos: usize,
+    /// Side-chain envelope follower level (linear).
+    pub sc_env: f32,
 }
 
 impl EffectState {
@@ -118,9 +142,8 @@ pub fn process_effect(
             let a = 1.0 - (-2.0 * std::f32::consts::PI * fc / sr).exp();
             for frame in samples.chunks_mut(channels) {
                 for (c, s) in frame.iter_mut().enumerate() {
-                    let y = state.lp_z[c] + a * (*s - state.lp_z[c]);
-                    state.lp_z[c] = y;
-                    *s = y;
+                    state.lp_z[c] += a * (*s - state.lp_z[c]);
+                    *s = state.lp_z[c];
                 }
             }
         }
@@ -131,9 +154,8 @@ pub fn process_effect(
             for frame in samples.chunks_mut(channels) {
                 for (c, s) in frame.iter_mut().enumerate() {
                     let x = *s;
-                    let lp = state.hp_z[c] + a * (x - state.hp_z[c]);
-                    state.hp_z[c] = lp;
-                    *s = x - lp;
+                    state.hp_z[c] += a * (x - state.hp_z[c]);
+                    *s = x - state.hp_z[c];
                 }
             }
         }
@@ -176,5 +198,43 @@ pub fn process_effect(
                 *s = *s * dry + delayed * wet;
             }
         }
+        // Handled by Mixer::finish with key buffer
+        InsertEffect::SidechainCompressor { .. } => {}
+    }
+}
+
+/// Apply side-chain compression: gain reduction driven by `key` (side-chain source).
+pub fn process_sidechain(
+    samples: &mut [f32],
+    key: &[f32],
+    threshold_db: f32,
+    ratio: f32,
+    makeup_db: f32,
+    state: &mut EffectState,
+    sample_rate: u32,
+) {
+    let thresh = db_to_lin(threshold_db);
+    let ratio = ratio.max(1.0);
+    let makeup = db_to_lin(makeup_db);
+    let sr = sample_rate.max(1) as f32;
+    // ~5 ms attack, ~80 ms release
+    let atk = 1.0 - (-1.0 / (0.005 * sr)).exp();
+    let rel = 1.0 - (-1.0 / (0.080 * sr)).exp();
+    let frames = samples.len().min(key.len());
+    for i in 0..frames {
+        let key_abs = key[i].abs();
+        if key_abs > state.sc_env {
+            state.sc_env += (key_abs - state.sc_env) * atk;
+        } else {
+            state.sc_env += (key_abs - state.sc_env) * rel;
+        }
+        let env = state.sc_env;
+        let mut g = 1.0;
+        if env > thresh {
+            let over = env / thresh;
+            let compressed = thresh * over.powf(1.0 / ratio);
+            g = if env > 1e-8 { compressed / env } else { 1.0 };
+        }
+        samples[i] *= g * makeup;
     }
 }
