@@ -1,0 +1,45 @@
+# Native Renzora plugin: RaMOD as FMOD-class audio for Renzora Engine.
+#
+# ⚠ Do NOT run `cargo build` here. This package is outside the engine workspace;
+# cargo would resolve a second Bevy from crates.io and corrupt TypeIds.
+# Author against a local engine checkout (path deps) or let the marketplace /
+# `cargo renzora` SDK compile it.
+#
+# Third-party deps (`bevy_ramod` and its graph) are built from a stripped
+# manifest that does not resolve Bevy — see Renzora docs:
+# docs/r1-alpha8/extending/native-plugins.md § "Crates from crates.io".
+
+[workspace]
+
+[package]
+name = "renzora_ramod"
+version = "0.1.0"
+edition = "2021"
+description = "RaMOD — open-source FMOD-class audio middleware for Renzora (events, banks, Live Update, spatial). Replaces or sits beside Kira."
+license = "GPL-3.0-or-later"
+repository = "https://github.com/SimonTek27/RaMOD"
+readme = "README.md"
+keywords = ["renzora", "audio", "fmod", "bevy", "middleware"]
+categories = ["game-development", "multimedia::audio"]
+publish = false
+
+[lib]
+crate-type = ["dylib"]
+path = "src/lib.rs"
+
+[dependencies]
+bevy = "0.19"
+# Path for rust-analyzer when this folder sits next to an engine checkout.
+# Marketplace / SDK builds strip bevy+renzora* and use the staged contract crate.
+renzora = { path = "../../engine/crates/renzora" }
+# RaMOD Bevy plugin (Bevy 0.19 + feature renzora). Resolved as a third-party
+# crate by the Renzora plugin builder (Bevy stripped from its graph).
+bevy_ramod = { git = "https://github.com/SimonTek27/RaMOD", features = ["renzora"] }
+
+# Marketplace listing (`renzora publish`). Cargo ignores this section.
+[package.metadata.renzora]
+marketplace_id = "ramod"
+category = "plugins"
+tags = ["audio", "fmod", "middleware", "events", "banks", "spatial", "live-update"]
+price_credits = 0
+min_engine_version = "r1-alpha8"
