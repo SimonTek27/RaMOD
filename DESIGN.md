@@ -117,29 +117,43 @@ RaMOD is organised in three clear layers:
 
 ---
 
-## 4. Development Phases (summary)
+## 4. Key Design Principles
 
-Detailed operational checklist lives in `ROADMAP.md`. High-level phases:
+1. **Open-source first** — no proprietary FMOD or Wwise libraries on the core path.
+2. **Bevy-native ergonomics** — ECS components, assets, and systems that feel idiomatic.
+3. **FMOD-class runtime, GoldWave-class editor** — two complementary product surfaces.
+4. **Dependency discipline** — foundation stays std-first; optional crates are feature-gated.
+5. **Progressive disclosure** — simple one-shot play works immediately; adaptive graphs are opt-in depth.
+6. **Modding-friendly** — FSB5 and clear bank/event formats for tools and community content.
+7. **Host-optional Renzora** — one-way integration; RaMOD never requires the Renzora monorepo.
 
-| Phase | Focus |
-|-------|--------|
-| **0** | Foundation solidification (FSB5, codecs, tests, CI) |
-| **1** | Runtime core (mixer, voices, 3D, events, DSP) |
-| **2** | Bevy plugin (`bevy_ramod`) + Live Update |
-| **3** | Authoring tools (waveform + Event Designer) |
-| **4** | Polish, docs, packaging, host integrations (Renzora) |
+Examples and migration guides should cover `bevy_audio`, `bevy_kira_audio`, and `bevy_fmod`.
 
 ---
 
-## 5. Runtime Design Notes
+## 5. Feature Roadmap Overview
 
-- **Mixer hierarchy** is the spine of the system; mute/solo/volume/sends and inserts live here.
-- **Virtual voices** allow many logical emitters with a capped real voice pool.
-- **Events** are the game-facing API: paths like `event:/sfx/footstep`, parameters, multi-instrument timelines.
-- **Parameters** are continuous (RTPC-style) and drive automation, intensity, and adaptive layers.
-- **3D** uses listener/emitter attributes, distance attenuation, Doppler; occlusion is progressive.
-- **DSP** is a modular insert/send graph per bus and per voice where needed.
-- **Banks** load descriptions + sample data (FSB5 and hybrid `bank.json` paths).
+Detailed checklist: `ROADMAP.md`.
+
+### Phase 0 — Foundation (current → 0.2)
+
+FSB5 R/W, PCM/Vorbis, pure-Rust encode path, tests, CI, recovery for `fsb.rs`.
+
+### Phase 1 — Runtime Core
+
+Mixer hierarchy, voices, virtual voices, events, parameters, 3D, DSP inserts, snapshots, cpal output.
+
+### Phase 2 — GoldWave-style Editor
+
+Waveform panel, selection, effects, import WAV/MP3/OGG/FLAC, preview.
+
+### Phase 3 — Studio-like Authoring
+
+Event Designer (multi-track, instruments, automation), bank build, Live Update.
+
+### Phase 4 — Bevy First-Class Support
+
+`bevy_ramod` polish, docs, examples, Renzora feature + native plugin packaging.
 
 ---
 
