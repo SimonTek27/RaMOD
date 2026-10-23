@@ -41,6 +41,16 @@ pub use profiler::{EmitterDebug, ProfilerFrame, ProfilerSession, SpectrumAnalyze
 pub use spatial::{doppler_pitch, Attributes3d, Attenuation, Vec3};
 pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
+/// Voice-stealing policy when an event hits its instance limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StealingMode {
+    #[default]
+    Oldest,
+    Quietest,
+    LowestPriority,
+    None,
+}
+
 /// One bus row for the editor profiler.
 #[derive(Debug, Clone)]
 pub struct BusMeterInfo {
