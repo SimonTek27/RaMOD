@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::buffer::BufferHandle;
 use crate::spatial::{Attenuation, Attributes3d};
+use crate::parameter::{ParameterDef, ParameterRegistry};
 use crate::voice::{PlayParams, VoiceHandle};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,6 +33,8 @@ pub struct EventDescription {
     pub is_3d: bool,
     pub attenuation: Attenuation,
     pub parameters: HashMap<String, f32>,
+    /// Optional kind metadata for discrete / labeled params.
+    pub param_defs: ParameterRegistry,
     pub priority: i32,
     pub looping: bool,
     pub output_bus: String,
@@ -45,6 +48,7 @@ impl EventDescription {
             is_3d: false,
             attenuation: Attenuation::default(),
             parameters: HashMap::new(),
+            param_defs: ParameterRegistry::new(),
             priority: 128,
             looping: false,
             output_bus: "SFX".into(),
@@ -73,7 +77,15 @@ impl EventDescription {
     }
 
     pub fn with_parameter(mut self, name: impl Into<String>, default: f32) -> Self {
-        self.parameters.insert(name.into(), default);
+        let name = name.into();
+        self.parameters.insert(name.clone(), default);
+        self.param_defs.insert(ParameterDef::continuous(name, default, 0.0, 1.0));
+        self
+    }
+
+    pub fn with_parameter_def(mut self, def: ParameterDef) -> Self {
+        self.parameters.insert(def.name.clone(), def.default);
+        self.param_defs.insert(def);
         self
     }
 }
@@ -86,6 +98,7 @@ pub struct EventInstance {
     pub is_3d: bool,
     pub attenuation: Attenuation,
     pub parameters: HashMap<String, f32>,
+    pub param_defs: ParameterRegistry,
     pub priority: i32,
     pub looping: bool,
     pub gain_user: f32,
@@ -104,11 +117,13 @@ impl EventInstance {
     }
 
     pub fn set_parameter(&mut self, name: &str, value: f32) -> bool {
+        let q = self.param_defs.quantize_value(name, value);
         if let Some(slot) = self.parameters.get_mut(name) {
-            *slot = value;
+            *slot = q;
             true
         } else {
-            false
+            self.parameters.insert(name.to_string(), q);
+            true
         }
     }
 
@@ -122,10 +137,6 @@ impl EventInstance {
 
     pub fn attributes(&self) -> Attributes3d {
         self.attributes
-    }
-
-    pub fn set_gain(&mut self, gain: f32) {
-        self.gain_user = gain.max(0.0);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -185,6 +196,7 @@ impl EventSystem {
             is_3d: desc.is_3d,
             attenuation: desc.attenuation,
             parameters: desc.parameters.clone(),
+            param_defs: desc.param_defs.clone(),
             priority: desc.priority,
             looping: desc.looping,
             gain_user: 1.0,
