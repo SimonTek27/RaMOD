@@ -1,7 +1,5 @@
 //! S3.1 / S5 / S7 — Project model: events, banks, assets, tracks, FX, AHDSR.
 
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +98,47 @@ impl ParameterDefEntry {
     }
 }
 
+/// Instance stealing policy when max_instances is reached (S7.22).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum StealingMode {
+    #[default]
+    Oldest,
+    Quietest,
+    LowestPriority,
+    None,
+}
+
+fn default_max_instances() -> u32 {
+    8
+}
+
+/// Multi / Single / Scatterer instrument kinds (S7.23 / S7.24).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum InstrumentKindEntry {
+    #[default]
+    Single,
+    Multi {
+        playlist: Vec<PlaylistEntry>,
+    },
+    Scatterer {
+        count: u32,
+        time_spread: f32,
+        pitch_spread: f32,
+        gain_spread: f32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistEntry {
+    pub asset_index: Option<usize>,
+    #[serde(default = "default_weight")]
+    pub weight: f32,
+}
+
+fn default_weight() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEntry {
     pub path: String,
@@ -130,6 +169,12 @@ pub struct EventEntry {
     pub markers: Vec<MarkerEntry>,
     #[serde(default = "default_output_bus")]
     pub output_bus: String,
+    /// Max concurrent instances of this event (S7.22).
+    #[serde(default = "default_max_instances")]
+    pub max_instances: u32,
+    /// Stealing policy when limit reached.
+    #[serde(default)]
+    pub stealing: StealingMode,
 }
 
 fn default_output_bus() -> String {
@@ -180,6 +225,8 @@ pub struct InstrumentEntry {
     pub sustain: f32,
     #[serde(default)]
     pub release: f32,
+    #[serde(default)]
+    pub kind: InstrumentKindEntry,
 }
 
 fn default_inst_len() -> f32 {
@@ -248,6 +295,7 @@ impl Default for Project {
                             decay: 0.0,
                             sustain: 1.0,
                             release: 0.05,
+                            kind: InstrumentKindEntry::Single,
                         }],
                         mute: false,
                         solo: false,
@@ -256,6 +304,8 @@ impl Default for Project {
                     automation: Vec::new(),
                     markers: Vec::new(),
                     output_bus: "SFX".into(),
+                    max_instances: 8,
+                    stealing: StealingMode::Oldest,
                 },
                 EventEntry {
                     path: "event:/sfx/loop_b".into(),
@@ -282,6 +332,7 @@ impl Default for Project {
                             decay: 0.0,
                             sustain: 1.0,
                             release: 0.05,
+                            kind: InstrumentKindEntry::Single,
                         }],
                         mute: false,
                         solo: false,
@@ -290,6 +341,8 @@ impl Default for Project {
                     automation: Vec::new(),
                     markers: Vec::new(),
                     output_bus: "SFX".into(),
+                    max_instances: 8,
+                    stealing: StealingMode::Oldest,
                 },
             ],
             banks: vec![BankEntry {
@@ -323,20 +376,22 @@ impl Project {
             automation: Vec::new(),
             markers: Vec::new(),
             output_bus: "SFX".into(),
+            max_instances: 8,
+            stealing: StealingMode::Oldest,
         });
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
         let s = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(path, s).map_err(|e| e.to_string())
     }
 
-    pub fn load(path: &Path) -> Result<Self, String> {
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
         let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         serde_json::from_str(&s).map_err(|e| e.to_string())
     }
 
-    pub fn export_bank_build(&self, _bank_name: &str, _out_path: &Path) -> Result<usize, String> {
+    pub fn export_bank_build(&self, _bank_name: &str, _out_path: &std::path::Path) -> Result<usize, String> {
         Ok(0)
     }
 }
