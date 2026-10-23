@@ -1,28 +1,33 @@
-//! RaMOD runtime — voices, events, mixer, DSP, 3D, live-update.
+//! RaMOD runtime — voices, mixer, designer, profiler, live update.
 
-pub mod buffer;
-pub mod designed;
-pub mod dsp;
-pub mod error;
-pub mod event;
-pub mod mixer;
-pub mod profiler;
-pub mod spatial;
-pub mod voice;
+mod automation;
+mod designer;
+mod dsp;
+mod envelope;
+mod events;
+mod mixer;
+mod profiler;
+mod spatial;
+mod spectrum;
+mod voice;
 
 #[cfg(feature = "live-update")]
-pub mod live_update;
+mod live_update;
 
-pub use buffer::{BufferHandle, SampleBuffer};
-pub use designed::{DesignedEvent, InstrumentDef, MarkerDef, TimelineTrack};
-pub use dsp::{InsertEffect, SidechainCompressor};
-pub use error::RuntimeError;
-pub use event::{EventDescription, EventInstance, EventPath};
-pub use mixer::{BusId, BusSend, Meter, Mixer};
-pub use spatial::{Attenuation, Attributes3d};
-pub use voice::{Ahdsr, VoicePool};
+pub use automation::AutomationCurve;
+pub use designer::{
+    DesignedEvent, InstrumentDef, InstrumentKind, LoopRegion, TimelineTrack, TransitionMarker,
+};
+pub use dsp::InsertEffect;
+pub use envelope::Ahdsr;
+pub use events::{EventDescription, EventInstance};
+pub use mixer::{BusId, BusSend, Meter, Mixer, Snapshot, SnapshotPlayer};
+pub use profiler::{ProfilerFrame, ProfilerSession};
+pub use spatial::{distance, Attenuation, Attributes3d, Vec3};
+pub use spectrum::SpectrumAnalyzer;
+pub use voice::{PlayParams, VoiceHandle, VoiceState};
 
-/// Per-bus meter snapshot for the profiler / editor.
+/// One bus row for the editor profiler.
 #[derive(Debug, Clone)]
 pub struct BusMeterInfo {
     pub id: u32,
@@ -35,7 +40,7 @@ pub struct BusMeterInfo {
     /// Linear send level to the Reverb return bus (0..=1).
     pub send_reverb: f32,
     pub is_return: bool,
-    /// Parent bus id for hierarchy (None = top / Master child).
+    /// Parent bus id for hierarchy (None = top-level under Master).
     pub parent_id: Option<u32>,
 }
 
