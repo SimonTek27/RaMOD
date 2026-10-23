@@ -60,6 +60,14 @@
     pub fn remove_bus_insert(&mut self, bus: BusId, index: usize) {
         self.mixer.remove_insert(bus, index);
     }
+    pub fn create_child_bus(&mut self, parent: BusId, name: &str) -> BusId {
+        self.mixer.add_bus(name, Some(parent))
+    }
+    pub fn set_bus_parent(&mut self, bus: BusId, parent: Option<BusId>) {
+        if let Some(b) = self.mixer.bus_mut(bus) {
+            b.parent = parent;
+        }
+    }
     pub fn set_bus_send_level(&mut self, bus: BusId, target_name: &str, level: f32) {
         self.mixer.set_send_level(bus, target_name, level);
     }
@@ -76,6 +84,7 @@
                 volume_db: b.volume_db,
                 send_reverb: self.mixer.send_level(b.id, "Reverb"),
                 is_return: b.is_return,
+                parent_id: b.parent.map(|p| p.0),
             })
             .collect()
     }
