@@ -1,7 +1,7 @@
 # RaMOD — Official Design Document
 
-**Version:** 0.1 (Draft)  
-**Date:** 2026-10-18  
+**Version:** 0.2  
+**Date:** 2026-10-23  
 **Status:** Living document  
 **Authors:** Simone Rizzo (SimonTek27) + design collaboration  
 **Repository:** https://github.com/SimonTek27/RaMOD  
@@ -11,25 +11,25 @@
 
 ## 1. Vision
 
-**RaMOD** aims to become a complete, open-source audio middleware for games, with a primary focus on the **Bevy** engine.
+**RaMOD** aims to become a complete, open-source audio middleware for games, with a primary focus on the **Bevy** engine and related Bevy-based hosts (notably **[Renzora Engine](https://github.com/renzora/engine)**).
 
 It combines three complementary capabilities:
 
-1. **FMOD-like runtime engine**  
-   Professional adaptive audio: hierarchical mixer, events, parameters, 3D spatialization, virtual voices, DSP graph, snapshots, and streaming.
+1. **FMOD / Wwise–class runtime engine**  
+   Professional adaptive audio: hierarchical mixer, events, parameters (RTPC-style), 3D spatialization, virtual voices, DSP graph, snapshots, states/switches-inspired routing, and streaming — informed by both commercial middleware families, without proprietary runtimes.
 
 2. **GoldWave-style sound editor**  
    Offline and real-time audio editing: non-destructive waveform/spectral editing, rich effects suite, batch processing, restoration tools, cue points, and analysis.
 
 3. **Native Bevy integration**  
-   Idiomatic ECS components, systems, AssetLoaders, and live-update support that feel native to Bevy developers.
+   Idiomatic ECS components, systems, AssetLoaders, and live-update support that feel native to Bevy developers, including optional first-class hooks for Renzora (Bevy 0.19).
 
 The project starts from a solid foundation: a pure-Rust, zero-dependency FSB5 reader/writer/editor. It will evolve into a full middleware while remaining:
 
 - Written primarily in pure Rust
-- Free of proprietary runtimes
+- Free of proprietary runtimes (no FMOD or Wwise SDK linkage on the core path)
 - Cross-platform (desktop + WASM targets)
-- Suitable both as a standalone library and as a Bevy plugin
+- Suitable both as a standalone library and as a Bevy / Renzora plugin
 
 ---
 
@@ -45,7 +45,7 @@ The project starts from a solid foundation: a pure-Rust, zero-dependency FSB5 re
 
 ### 2.2 Non-Goals (at least for v1.0)
 
-- Full feature parity with the commercial FMOD Studio UI (we aim for the *spirit* and core capabilities, not pixel-perfect cloning).
+- Full feature parity with commercial **FMOD Studio** or **Wwise Authoring Tool** UIs (we aim for the *spirit* and core capabilities of both, not pixel-perfect cloning).
 - Real-time collaborative multi-user editing.
 - High-end cinema/film post-production features.
 - Supporting every obscure hardware codec from 20 years ago.
@@ -110,95 +110,48 @@ RaMOD is organised in three clear layers:
 
 - Bevy Plugin
 - AssetLoaders for banks and events
-- Components: `AudioEmitter`, `AudioListener`, `RamodEventInstance`, `Bus`, etc.
-- Systems that keep spatial data in sync with `Transform` and velocity
-- Support for hot-reload and Live Update
-- Examples and migration guides from `bevy_audio`, `bevy_kira_audio`, and `bevy_fmod`
+- ECS components (`AudioEmitter`, `AudioListener`, parameters, …)
+- Systems that tick the runtime and sync transforms
+- Live Update client/server for editor ↔ game communication
+- Optional feature `renzora` for Renzora Engine hosts (see §7)
 
 ---
 
-## 4. Key Design Principles
+## 4. Development Phases (summary)
 
-1. **Pure Rust first**  
-   Prefer pure-Rust implementations. Optional FFI (e.g. for legacy encoders) is allowed behind features and must degrade gracefully.
+Detailed operational checklist lives in `ROADMAP.md`. High-level phases:
 
-2. **Zero or minimal mandatory dependencies**  
-   The foundation stays as light as possible. Heavier crates (audio backends, GUI, etc.) are optional features.
-
-3. **Self-verifying and faithful**  
-   Writers re-parse their own output. Editing preserves untouched data byte-for-byte when possible.
-
-4. **ECS-native for Bevy**  
-   The Bevy plugin should feel idiomatic: components, resources, events, and systems rather than a thin C wrapper.
-
-5. **Progressive disclosure**  
-   Simple API for common cases (play a sound, set volume). Full power available when needed (custom DSP graphs, complex events).
-
-6. **Modding-friendly**  
-   Keep excellent FSB5 support so existing banks and modding workflows continue to work.
-
-7. **Open and inspectable**  
-   Clear data structures, good error messages, profiling hooks, and documentation.
+| Phase | Focus |
+|-------|--------|
+| **0** | Foundation solidification (FSB5, codecs, tests, CI) |
+| **1** | Runtime core (mixer, voices, 3D, events, DSP) |
+| **2** | Bevy plugin (`bevy_ramod`) + Live Update |
+| **3** | Authoring tools (waveform + Event Designer) |
+| **4** | Polish, docs, packaging, host integrations (Renzora) |
 
 ---
 
-## 5. Feature Roadmap Overview
+## 5. Runtime Design Notes
 
-See [ROADMAP.md](ROADMAP.md) for the full 50-item operational plan.
-
-### Phase 0 — Foundation (current → 0.2)
-- Stabilise and complete FSB5 support
-- Pure-Rust Vorbis encode/decode
-- Official CLI
-- crates.io publication
-- Comprehensive tests + fuzzing
-- Documentation (mdBook)
-
-### Phase 1 — Runtime Core
-- Audio backend (cpal / Firewheel / rodio)
-- Hierarchical mixer + voices
-- Basic DSP effects
-- 3D spatial + Doppler
-- Parameter and simple Event system
-- Streaming support
-
-### Phase 2 — GoldWave-style Editor
-- Interactive waveform + spectral views
-- Non-destructive editing operations
-- Effects suite and batch processing
-- Cue points, merger/splitter
-- GUI (egui/iced) + headless mode
-
-### Phase 3 — Studio-like Authoring
-- Event Designer (timeline, instruments, automation)
-- Adaptive music support
-- Live Update protocol
-- Advanced bank building and platform optimisation
-- Snapshot system
-
-### Phase 4 — Bevy First-Class Support
-- `bevy_ramod` plugin
-- Full ECS integration
-- Asset pipeline and hot-reload
-- Official examples and migration guides
-- Interoperability with future Bevy audio engine
+- **Mixer hierarchy** is the spine of the system; mute/solo/volume/sends and inserts live here.
+- **Virtual voices** allow many logical emitters with a capped real voice pool.
+- **Events** are the game-facing API: paths like `event:/sfx/footstep`, parameters, multi-instrument timelines.
+- **Parameters** are continuous (RTPC-style) and drive automation, intensity, and adaptive layers.
+- **3D** uses listener/emitter attributes, distance attenuation, Doppler; occlusion is progressive.
+- **DSP** is a modular insert/send graph per bus and per voice where needed.
+- **Banks** load descriptions + sample data (FSB5 and hybrid `bank.json` paths).
 
 ---
 
 ## 6. Bevy Integration Design Notes
 
-The Bevy plugin should expose:
-
 ```rust
-// Example conceptual API (subject to change)
-commands.spawn((
-    AudioEmitter::new("event:/weapons/gunshot"),
-    Transform::from_xyz(1.0, 0.0, 2.0),
-));
+// Illustrative API shape
+app.add_plugins(RamodPlugin::default());
 
-// Listener
 commands.spawn((
-    Camera3dBundle::default(),
+    SpatialAudioBundle::new("event:/sfx/engine", transform.translation),
+    PlayOnSpawn,
     AudioListener,
 ));
 
@@ -215,7 +168,95 @@ Key design choices:
 
 ---
 
-## 7. Technology Choices (current direction)
+## 7. Renzora Engine Integration
+
+[Renzora Engine](https://github.com/renzora/engine) is a modular 2D/3D game engine and scene editor built on **Bevy 0.19**. Its default audio path is Kira (`renzora_audio` + `renzora::audio_backend::Backend`).
+
+RaMOD treats Renzora as a **first-class optional host**, not as a hard dependency of the core library.
+
+### 7.1 Design principles
+
+| Principle | Implication |
+|-----------|-------------|
+| **One-way dependency** | A Renzora game/plugin may depend on `bevy_ramod`; RaMOD does **not** depend on the Renzora monorepo (too large and workspace-bound). |
+| **Bevy version alignment** | `bevy_ramod` tracks Bevy **0.19** so a Renzora project links a single Bevy major. |
+| **Optional feature** | Integration code lives behind Cargo feature `renzora` on `bevy_ramod`. |
+| **Replace or coexist** | Games may use RaMOD only (recommended), or drive RaMOD through Renzora’s `Backend` trait (Option B). |
+| **Native plugin path** | `renzora_plugin/` packages RaMOD as a Renzora **Runtime** native plugin (marketplace id `ramod`) for SDK/marketplace install. |
+
+### 7.2 Integration options
+
+**Option A — RaMOD-only (recommended)**
+
+```rust
+App::new()
+    .add_plugins(DefaultPlugins)
+    .replace_renzora_audio_with_ramod()  // feature = "renzora"
+    .run();
+```
+
+Skips Kira. Full events, banks, spatial emitters, Live Update on TCP **:17420**.
+
+**Option B — Renzora `Backend`**
+
+`RamodRenzoraBackend` mirrors `renzora::audio_backend::Backend`. Zero-glue `impl Backend` lives in the consumer crate (reference: `docs/renzora_backend_glue.rs`) because RaMOD cannot hard-depend on the engine’s contract crate.
+
+**Native plugin**
+
+`renzora_plugin/` (`renzora_ramod`) calls Option A on load via `renzora::plugin!(…, Runtime)` so exported games ship the audio stack.
+
+### 7.3 Shared conventions
+
+- Bus names aligned with Studio-style routing: **Master**, **SFX**, **Music** (`bevy_ramod::renzora::buses`).
+- Live Update protocol is RaMOD’s own (not FMOD’s); same port/behaviour for plain Bevy and Renzora hosts.
+
+### 7.4 Documentation
+
+Full operational guide: [`docs/RENZORA.md`](docs/RENZORA.md).
+
+---
+
+## 8. Lessons from Wwise (what we absorb, what we do not copy)
+
+Audiokinetic **Wwise** is the other major commercial adaptive-audio middleware beside FMOD. RaMOD is **not** a Wwise clone and does **not** link the Wwise SDK. We study Wwise the same way we study FMOD: as a proven design vocabulary for game audio.
+
+### 8.1 Concepts we deliberately absorb
+
+| Wwise idea | RaMOD direction |
+|------------|-----------------|
+| **Actor-Mixer Hierarchy** | Hierarchical mixer (Master → groups/buses → voices) already in `ramod_runtime`; deepen naming and routing ergonomics over time. |
+| **Game Syncs** (States, Switches, Triggers, RTPCs) | **Parameters** (RTPC-like continuous values) are first-class; discrete **states/switches** map to event branching, transition markers, and future lightweight state tables. |
+| **SoundBanks** | FSB5 + `bank.json` hybrid banks today; future native bank format may borrow Wwise-style load/unload granularity without proprietary containers. |
+| **Event-driven design** | Play/stop/set-parameter on named events (`event:/…`) — shared with FMOD Studio mental model. |
+| **Interactive music** | Multi-track designed events, transition markers, crossfades (S5.x); expand toward segment/playlist patterns where useful. |
+| **Profiling** | Bus meters, CPU/voices sparklines, 3D emitter map — Wwise Profiler–inspired, open implementation. |
+| **Side-chaining / ducking** | Sidechain compressor (e.g. SFX → Music) in the mixer path. |
+
+### 8.2 Explicit non-goals relative to Wwise
+
+- No dependency on **Wwise SDK**, Authoring Tool, or proprietary bank formats as a required runtime.
+- No pixel-perfect **Wwise Authoring Tool** UI; RaMOD Studio targets FMOD Studio *spirit* + GoldWave editing, not WAAPI-centric workflows.
+- No commitment to full **Rooms & Portals** / acoustic geometry parity in v1.0 (may appear as research/later phases).
+- No WAAPI-compatible remote control surface in v1.0 (Live Update is RaMOD-native).
+
+### 8.3 Positioning vs FMOD and Wwise
+
+```
+                    Commercial          Open-source (RaMOD)
+Runtime model       FMOD Core /         ramod_runtime
+                    Wwise Sound Engine
+Authoring           FMOD Studio /       RaMOD Studio (events)
+                    Wwise Authoring     + waveform (GoldWave-style)
+Bevy binding        bevy_fmod (FMOD)    bevy_ramod
+Host engines        Engine-agnostic     Bevy-first; Renzora optional
+License             Proprietary         GPL-3.0-or-later
+```
+
+RaMOD’s mandate remains: **ship adaptive game audio without proprietary middleware**. FMOD and Wwise define the bar for capability; they are not dependencies and not UI blueprints to replicate line-by-line.
+
+---
+
+## 9. Technology Choices (current direction)
 
 | Area                    | Preferred approach                          | Notes |
 |-------------------------|---------------------------------------------|-------|
@@ -224,13 +265,14 @@ Key design choices:
 | Audio backend           | cpal / Firewheel / rodio                    | Feature-gated |
 | DSP                     | Custom graph + optional crates              | Keep control |
 | GUI (Editor)            | egui or iced                                | Lightweight |
-| Bevy                    | Official plugin crate                       | Match Bevy release cadence |
+| Bevy                    | Official plugin crate (`bevy_ramod`)        | Track Bevy **0.19** (Renzora-aligned); feature-gate older if needed |
+| Host engines            | Bevy standalone + Renzora (optional)        | One-way dependency; see §7 |
 | Serialization           | Custom binary + optional RON/JSON           | For events and projects |
 | Testing                 | cargo test + fuzzing + real bank fixtures   | Critical |
 
 ---
 
-## 8. Licensing & Community
+## 10. Licensing & Community
 
 - Core library: **GPL-3.0-or-later** (current). Dual-licensing may be considered later if it helps adoption.
 - Contributions welcome under the same license.
@@ -239,25 +281,27 @@ Key design choices:
 
 ---
 
-## 9. Success Metrics (v1.0)
+## 11. Success Metrics (v1.0)
 
 - Stable runtime that can replace basic FMOD Core usage in a Bevy game.
 - Functional waveform editor with the most common GoldWave-style operations.
 - Official `bevy_ramod` plugin with good documentation and examples.
 - Ability to load and play real commercial FSB5 banks.
-- Positive feedback from early Bevy adopters.
+- Positive feedback from early Bevy (and Renzora) adopters.
+- Documented, optional Renzora path (`feature = "renzora"`, native plugin `ramod`).
 - Clean CI, good test coverage, and published crates.
 
 ---
 
-## 10. Document History
+## 12. Document History
 
 | Version | Date       | Changes                          |
 |---------|------------|----------------------------------|
+| 0.2     | 2026-10-23 | Renzora integration (§7); Wwise lessons (§8); Bevy 0.19 host note |
 | 0.1     | 2026-10-18 | Initial official design document |
 
 This is a living document. It will be updated as architecture decisions solidify and phases are completed.
 
 ---
 
-*RaMOD — Open-source adaptive audio middleware for Bevy and beyond.*
+*RaMOD — Open-source adaptive audio middleware for Bevy, Renzora, and beyond.*
