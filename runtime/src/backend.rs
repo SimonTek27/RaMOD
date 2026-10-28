@@ -7,7 +7,7 @@ use crate::error::RuntimeError;
 use crate::RuntimeConfig;
 
 /// Trait for device output (cpal or null).
-pub trait OutputBackend: Send {
+pub trait OutputBackend: Send + Sync {
     fn sample_rate(&self) -> u32;
     fn channels(&self) -> u16;
     /// Push interleaved samples into the device ring (no-op for null).
@@ -75,9 +75,11 @@ mod cpal_backend {
         _stream: cpal::Stream,
     }
 
-    // cpal::Stream is !Send on some platforms due to phantom; the stream is only
-    // owned by this backend and never shared across threads after construction.
+    // cpal::Stream is !Send/!Sync on some platforms due to phantom data; the stream
+    // is owned by this backend and only ever written from the audio callback, while
+    // the shared ring is behind a Mutex.
     unsafe impl Send for CpalBackend {}
+    unsafe impl Sync for CpalBackend {}
 
     impl OutputBackend for CpalBackend {
         fn sample_rate(&self) -> u32 {

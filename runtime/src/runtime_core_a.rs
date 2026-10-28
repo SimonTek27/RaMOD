@@ -1,11 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bank::BankRegistry;
 use buffer::BufferStore;
-use designer::DesignedEvent;
 use event::EventSystem;
-use mixer::{Mixer, Snapshot, SnapshotPlayer};
-use spatial::{closing_speed, distance, Attributes3d as Attr3d};
 use voice::VoicePool;
 
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
@@ -332,3 +328,4 @@ impl Runtime {
         self.sync_event_spatial_gains();
         self.snapshots.apply(&mut self.mixer);
     }
+}

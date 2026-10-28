@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bevy_ramod::prelude::*;
+use bevy::prelude::Vec3;
 
 fn main() {
     App::new()
@@ -67,7 +68,7 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
     }
 
     if !found {
-        bevy::log::warn!("No Master.fsb found — demo tone fallback");
+        log::warn!("No Master.fsb found — demo tone fallback");
         audio.register_demo_tone("event:/fsb/demo", 440.0);
     }
 
@@ -91,5 +92,5 @@ fn spawn_when_ready(
         AudioParameter::new("Intensity", 0.9),
     ));
     ready.spawned = true;
-    bevy::log::info!("Playing {event}");
+    log::info!("Playing {event}");
 }

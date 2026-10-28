@@ -19,6 +19,12 @@ impl BankName {
     }
 }
 
+impl Default for BankName {
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
 /// One entry registered into the runtime event system.
 #[derive(Debug, Clone)]
 pub struct BankEventSpec {

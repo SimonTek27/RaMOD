@@ -555,7 +555,7 @@ impl SnapshotPlayer {
     }
 
     pub fn active_name(&self) -> Option<&str> {
-        self.active.as_ref().map(|(n)| n.as_str())
+        self.active.as_ref().map(|(n, _)| n.as_str())
     }
 
     pub fn active_weight(&self) -> f32 {

@@ -63,7 +63,7 @@ impl RenzoraRamodExt for App {
             live_update: true,
             replace_kira: false,
         });
-        bevy::log::info!(
+        log::info!(
             "bevy_ramod: Renzora host markers enabled ({})",
             bevy_ramod_renzora_bridge_version()
         );
@@ -87,7 +87,7 @@ impl RenzoraRamodExt for App {
             live_update: true,
             replace_kira: true,
         });
-        bevy::log::info!(
+        log::info!(
             "bevy_ramod: RaMOD is the primary audio path — do not register Kira \
              (replace_kira=true, {})",
             bevy_ramod_renzora_bridge_version()
@@ -98,7 +98,7 @@ impl RenzoraRamodExt for App {
     fn insert_ramod_renzora_backend(&mut self, open_device: bool) -> Result<&mut Self, String> {
         let backend = RamodRenzoraBackend::new(open_device)?;
         self.insert_non_send_resource(RamodBackendCell { backend });
-        bevy::log::info!(
+        log::info!(
             "bevy_ramod: RamodRenzoraBackend inserted as NonSend ({})",
             bevy_ramod_renzora_bridge_version()
         );

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bevy_ramod::prelude::*;
+use bevy::prelude::Vec3;
 
 fn main() {
     App::new()
@@ -92,5 +93,5 @@ fn spawn_emitter_when_ready(
         PlayOnSpawn,
     ));
     ready.spawned = true;
-    bevy::log::info!("Playing {}", ready.event);
+    log::info!("Playing {}", ready.event);
 }

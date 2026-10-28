@@ -42,13 +42,13 @@ impl LiveUpdateHub {
     pub fn bind_default() -> Self {
         match LiveUpdateServer::bind_default() {
             Ok(server) => {
-                bevy::log::info!("Live Update listening on {}", server.local_addr());
+                log::info!("Live Update listening on {}", server.local_addr());
                 Self {
                     server: Some(server),
                 }
             }
             Err(e) => {
-                bevy::log::warn!("Live Update bind failed: {e}");
+                log::warn!("Live Update bind failed: {e}");
                 Self { server: None }
             }
         }
@@ -157,7 +157,7 @@ impl RamodAudio {
             let (samples, channels, sample_rate) = match fsb_sample_to_pcm(&bank, i) {
                 Ok(v) => v,
                 Err(e) => {
-                    bevy::log::warn!("FSB sample '{}': {e}", sample.name);
+                    log::warn!("FSB sample '{}': {e}", sample.name);
                     continue;
                 }
             };
@@ -165,7 +165,7 @@ impl RamodAudio {
             let buf = match self.runtime.load_pcm(samples, channels, sample_rate) {
                 Ok(b) => b,
                 Err(e) => {
-                    bevy::log::warn!("load_pcm {}: {e}", sample.name);
+                    log::warn!("load_pcm {}: {e}", sample.name);
                     continue;
                 }
             };
@@ -183,7 +183,7 @@ impl RamodAudio {
             count += 1;
         }
 
-        bevy::log::info!(
+        log::info!(
             "RamodAudio: registered {count}/{} samples from FSB '{}'",
             bank.len(),
             path.display()
@@ -218,11 +218,11 @@ impl RamodAudio {
                     }
                 }
                 Err(e) => {
-                    bevy::log::warn!("bank event {}: {e}", ev.path);
+                    log::warn!("bank event {}: {e}", ev.path);
                 }
             }
         }
-        bevy::log::info!(
+        log::info!(
             "RamodAudio: registered {count}/{} events from bank '{}' ({} from FSB)",
             bank.events.len(),
             bank.name,
@@ -393,7 +393,7 @@ fn load_fsb_pcm_index(
     let bank = match Fsb5::from_file(&path) {
         Ok(b) => b,
         Err(e) => {
-            bevy::log::warn!("hybrid FSB {}: {e}", path.display());
+            log::warn!("hybrid FSB {}: {e}", path.display());
             return None;
         }
     };
@@ -406,10 +406,10 @@ fn load_fsb_pcm_index(
             Ok(pcm) => {
                 map.insert(sample.name.clone(), pcm);
             }
-            Err(e) => bevy::log::warn!("FSB sample '{}': {e}", sample.name),
+            Err(e) => log::warn!("FSB sample '{}': {e}", sample.name),
         }
     }
-    bevy::log::info!(
+    log::info!(
         "hybrid: indexed {} samples from {}",
         map.len(),
         path.display()
@@ -435,7 +435,7 @@ impl Default for RamodPlugin {
 impl Plugin for RamodPlugin {
     fn build(&self, app: &mut App) {
         let audio = RamodAudio::new(self.open_device).unwrap_or_else(|e| {
-            bevy::log::error!("RamodAudio init failed: {e}; falling back to headless");
+            log::error!("RamodAudio init failed: {e}; falling back to headless");
             RamodAudio::new(false).expect("headless runtime")
         });
 
@@ -475,8 +475,8 @@ fn process_load_bank(
 ) {
     for (entity, load) in &q {
         match audio.load_bank_path(&load.path) {
-            Ok(n) => bevy::log::info!("LoadBank {}: {n} events/samples", load.path.display()),
-            Err(e) => bevy::log::error!("LoadBank {}: {e}", load.path.display()),
+            Ok(n) => log::info!("LoadBank {}: {n} events/samples", load.path.display()),
+            Err(e) => log::error!("LoadBank {}: {e}", load.path.display()),
         }
         commands.entity(entity).remove::<LoadBank>();
     }
@@ -559,7 +559,7 @@ fn start_emitters(
                 instances.insert(entity, id);
             }
             Err(e) => {
-                bevy::log::warn!("play_event {}: {e}", emitter.event);
+                log::warn!("play_event {}: {e}", emitter.event);
             }
         }
         commands.entity(entity).remove::<PlayOnSpawn>();
@@ -642,7 +642,7 @@ fn cleanup_despawned_emitters(
     for entity in removed.read() {
         if let Some(id) = instances.remove(entity) {
             audio.runtime.release_instance(id);
-            bevy::log::debug!("released instance {id} for despawned {entity:?}");
+            log::debug!("released instance {id} for despawned {entity:?}");
         }
     }
 }
@@ -650,7 +650,7 @@ fn cleanup_despawned_emitters(
 fn live_update_poll(mut audio: ResMut<RamodAudio>, mut live: ResMut<LiveUpdateHub>) {
     if let Some(server) = live.server.as_mut() {
         if let Err(e) = server.poll(&mut audio.runtime) {
-            bevy::log::debug!("live poll: {e}");
+            log::debug!("live poll: {e}");
         }
     }
 }

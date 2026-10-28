@@ -111,8 +111,7 @@ impl ProfilerSession {
         let mut out = String::new();
         for f in &self.frames {
             out.push_str(&frame_to_json(f));
-            out.push('
-');
+            out.push('\n');
         }
         out
     }

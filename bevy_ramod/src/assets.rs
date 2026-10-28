@@ -62,7 +62,7 @@ struct BankFile {
     events: Vec<BankEventAsset>,
 }
 
-#[derive(Default)]
+#[derive(Default, TypePath)]
 pub struct RamodBankLoader;
 
 #[derive(Debug, Error)]
@@ -92,7 +92,7 @@ impl AssetLoader for RamodBankLoader {
         let base_dir = load_context
             .path()
             .parent()
-            .map(|p| p.to_path_buf());
+            .map(|p| p.path().to_path_buf());
 
         Ok(RamodBankAsset {
             name: file.name,

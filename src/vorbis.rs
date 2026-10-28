@@ -67,7 +67,9 @@ impl std::fmt::Display for VorbisExportError {
                 f.write_str("sample has no VORBISDATA metadata chunk")
             }
             VorbisExportError::UnknownSetupHeader(crc32) => {
-                write!(f, "no setup header for id {crc32}")
+                // Hex is the key VORBISDATA stores, so it is the form a user can
+                // search for in the bundled header table; decimal alone is not.
+                write!(f, "no setup header for id 0x{crc32:08x} ({crc32})")
             }
             VorbisExportError::NoPackets => f.write_str("no audio packets found"),
             VorbisExportError::NotOgg => f.write_str("input is not a well-formed Ogg stream"),

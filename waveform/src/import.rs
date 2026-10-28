@@ -100,9 +100,7 @@ pub fn read_audio(path: &Path) -> Result<WaveBuffer, ImportError> {
                 decoder.reset();
                 continue;
             }
-            Err(SymphoniaError::IoError(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 break;
             }
             Err(SymphoniaError::IoError(e)) => return Err(ImportError::Io(e)),
@@ -148,50 +146,77 @@ pub fn read_wav(path: &Path) -> Result<WaveBuffer, ImportError> {
 
 fn append_decoded(out: &mut Vec<f32>, decoded: AudioBufferRef<'_>, channels: u16) {
     let ch = channels.max(1) as usize;
+    // Every branch feeds the same concrete helper, so no `Sample` bound is needed.
     match decoded {
         AudioBufferRef::F32(buf) => {
-            let frames = buf.frames();
-            for f in 0..frames {
-                for c in 0..ch.min(buf.spec().channels.count()) {
-                    out.push(buf.chan(c)[f]);
-                }
-                // pad if fewer planes than expected
-                for _ in buf.spec().channels.count()..ch {
-                    out.push(0.0);
-                }
-            }
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| buf.chan(c)[f]);
         }
-        AudioBufferRef::U8(buf) => plane_to_f32(out, buf, |s| (s as f32 - 128.0) / 128.0, ch),
+        AudioBufferRef::U8(buf) => {
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                (buf.chan(c)[f] as f32 - 128.0) / 128.0
+            });
+        }
         AudioBufferRef::U16(buf) => {
-            plane_to_f32(out, buf, |s| (s as f32 / 65535.0) * 2.0 - 1.0, ch)
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                (buf.chan(c)[f] as f32 / 65535.0) * 2.0 - 1.0
+            });
         }
         AudioBufferRef::U24(buf) => {
-            plane_to_f32(out, buf, |s| s.inner() as f32 / 8_388_607.0, ch)
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                buf.chan(c)[f].inner() as f32 / 8_388_607.0
+            });
         }
         AudioBufferRef::U32(buf) => {
-            plane_to_f32(out, buf, |s| (s as f32 / 4_294_967_295.0) * 2.0 - 1.0, ch)
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                (buf.chan(c)[f] as f32 / 4_294_967_295.0) * 2.0 - 1.0
+            });
         }
-        AudioBufferRef::S8(buf) => plane_to_f32(out, buf, |s| s as f32 / 128.0, ch),
-        AudioBufferRef::S16(buf) => plane_to_f32(out, buf, |s| s as f32 / 32768.0, ch),
+        AudioBufferRef::S8(buf) => {
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                buf.chan(c)[f] as f32 / 128.0
+            });
+        }
+        AudioBufferRef::S16(buf) => {
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                buf.chan(c)[f] as f32 / 32768.0
+            });
+        }
         AudioBufferRef::S24(buf) => {
-            plane_to_f32(out, buf, |s| s.inner() as f32 / 8_388_608.0, ch)
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                buf.chan(c)[f].inner() as f32 / 8_388_608.0
+            });
         }
-        AudioBufferRef::S32(buf) => plane_to_f32(out, buf, |s| s as f32 / 2_147_483_648.0, ch),
-        AudioBufferRef::F64(buf) => plane_to_f32(out, buf, |s| s as f32, ch),
+        AudioBufferRef::S32(buf) => {
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| {
+                buf.chan(c)[f] as f32 / 2_147_483_648.0
+            });
+        }
+        AudioBufferRef::F64(buf) => {
+            let (frames, planes) = (buf.frames(), buf.spec().channels.count());
+            push_frames(out, frames, planes, ch, |c, f| buf.chan(c)[f] as f32);
+        }
     }
 }
 
-fn plane_to_f32<S: Copy>(
+fn push_frames(
     out: &mut Vec<f32>,
-    buf: symphonia::core::audio::AudioBuffer<S>,
-    conv: impl Fn(S) -> f32,
+    frames: usize,
+    planes: usize,
     ch: usize,
+    mut get: impl FnMut(usize, usize) -> f32,
 ) {
-    let frames = buf.frames();
-    let planes = buf.spec().channels.count();
     for f in 0..frames {
         for c in 0..ch.min(planes) {
-            out.push(conv(buf.chan(c)[f]));
+            out.push(get(c, f));
         }
         for _ in planes..ch {
             out.push(0.0);

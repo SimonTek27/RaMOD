@@ -57,7 +57,7 @@ impl LiveUpdateServer {
                         .set_read_timeout(Some(Duration::from_millis(1)))
                         .ok();
                     let mut stream_write = stream.try_clone().map_err(|e| e.to_string())?;
-                    let welcome = r#{"cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#;
+                    let welcome = r#""cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#;
                     let _ = writeln!(stream_write, "{welcome}");
                     let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
                     self.clients.push(ClientConn {
@@ -115,10 +115,10 @@ fn handle_line(rt: &mut Runtime, line: &str) -> Option<String> {
     let cmd = json_str(line, "cmd").unwrap_or("");
     match cmd {
         "hello" => Some(
-            r#{"cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#
+            r#""cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#
                 .into(),
         ),
-        "ping" => Some(r#{"cmd":"pong"}"#.into()),
+        "ping" => Some(r#""cmd":"pong"}"#.into()),
         "set_param" => {
             let event = json_str(line, "event").unwrap_or("");
             let name = json_str(line, "name").unwrap_or("");

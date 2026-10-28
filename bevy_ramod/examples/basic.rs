@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 use bevy_ramod::prelude::*;
+use bevy::prelude::Vec3;
 
 fn main() {
     App::new()
@@ -37,5 +38,5 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
         PlayOnSpawn,
     ));
 
-    bevy::log::info!("bevy_ramod: playing event:/sfx/beep");
+    log::info!("bevy_ramod: playing event:/sfx/beep");
 }

@@ -28,13 +28,13 @@ crate-type = ["dylib"]
 path = "src/lib.rs"
 
 [dependencies]
-bevy = "0.19"
+bevy = "0.20"
 # Path for rust-analyzer when this folder sits next to an engine checkout.
 # Marketplace / SDK builds strip bevy+renzora* and use the staged contract crate.
 renzora = { path = "../../engine/crates/renzora" }
-# RaMOD Bevy plugin (Bevy 0.19 + feature renzora). Resolved as a third-party
+# RaMOD Bevy plugin (Bevy 0.20 + feature renzora). Resolved as a third-party
 # crate by the Renzora plugin builder (Bevy stripped from its graph).
-bevy_ramod = { git = "https://github.com/SimonTek27/RaMOD", features = ["renzora"] }
+bevy_ramod = { path = "../bevy_ramod", features = ["renzora"] }
 
 # Marketplace listing (`renzora publish`). Cargo ignores this section.
 [package.metadata.renzora]

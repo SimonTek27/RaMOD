@@ -57,7 +57,7 @@ pub fn write_wav_i16(
     let block_align = channels * 2;
     file.write_all(&block_align.to_le_bytes())?;
     file.write_all(&16u16.to_le_bytes())?; // bits
-    // data
+                                           // data
     file.write_all(b"data")?;
     file.write_all(&(data_bytes as u32).to_le_bytes())?;
 

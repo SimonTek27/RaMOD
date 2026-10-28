@@ -8,6 +8,7 @@
 
 use bevy::prelude::*;
 use bevy_ramod::prelude::*;
+use bevy::prelude::Vec3;
 
 fn main() {
     App::new()
@@ -41,5 +42,5 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
         AudioParameter::new("Intensity", 1.0),
     ));
 
-    bevy::log::info!("Live Update listening — connect editor to push Intensity");
+    log::info!("Live Update listening — connect editor to push Intensity");
 }
