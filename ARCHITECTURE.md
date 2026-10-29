@@ -1,6 +1,6 @@
 # RaMOD Architecture Blueprint
 
-**Open-source FMOD-class audio middleware for Bevy**  
+**Open-source FMOD-class audio middleware and audio editor for Bevy and Renzora**  
 **Version:** 0.1 · 2026-10-18  
 **Status:** Canonical technical blueprint  
 **Companion docs:** [DESIGN.md](DESIGN.md) · [ROADMAP.md](ROADMAP.md)
