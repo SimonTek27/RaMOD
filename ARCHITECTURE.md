@@ -25,13 +25,15 @@ This document defines **how** the pieces fit together.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                         GAME / BEVY APPLICATION                        │
+│                         GAME / BEVY / RAMOD                            |
+|                             APPLICATION                                │
 │                                                                        │
 │   Components: AudioEmitter, AudioListener, Velocity, BusVolume…        │
 │   Systems: spatial_sync, runtime_tick, event_lifecycle                 │
 │   Assets: Bank, EventDescription, Snapshot                             │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │  bevy_ramod (plugin layer)
+                                 │  renzora_ramod (plugin layer)
 ┌────────────────────────────────▼───────────────────────────────────────┐
 │                         RaMOD RUNTIME (Core)                           │
 │                                                                        │
