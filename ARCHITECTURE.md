@@ -9,12 +9,12 @@
 
 ## 0. Mandate
 
-RaMOD **must** become a complete, open-source alternative to FMOD.
+RaMOD **must** become a complete, open-source alternative to FMOD and WWISE.
 
 - No proprietary runtime  
 - No mandatory closed binaries  
 - Pure Rust core (optional backends only)  
-- First-class Bevy integration  
+- First-class Bevy and Renzora integration  
 - Authoring tools (GoldWave-style editor + light Studio) in the same ecosystem  
 
 This document defines **how** the pieces fit together.
@@ -384,14 +384,14 @@ At every step the **open-source mandate** is non-negotiable: no proprietary FMOD
 
 - **FSB5**: first-class (modding + existing content).  
 - **Future native bank**: designed for events, parameters, snapshots.  
-- **Bevy audio / Kira / Firewheel**: can coexist; `bevy_ramod` is an alternative, not a forced replacement.  
+- **Bevy audio / Kira / Firewheel / Renzora**: can coexist; `bevy_ramod` and `renzora_ramod` are an alternative, not a forced replacement.  
 - **WASM**: target after desktop is solid (backend choice matters).  
 
 ---
 
-## 11. Success Definition (open-source FMOD)
+## 11. Success Definition (open-source FMOD / WWISE)
 
-RaMOD is successful when a Bevy team can:
+RaMOD is successful when a Bevy team and/or Renzora team can:
 
 1. Design adaptive audio without FMOD Studio.  
 2. Ship a game using only open-source audio middleware.  
