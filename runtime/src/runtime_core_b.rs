@@ -281,6 +281,21 @@ impl Runtime {
     pub fn clear_snapshot(&mut self) {
         self.snapshots.clear();
     }
+
+    /// Capture the current bus levels as the base for snapshot interpolation.
+    pub fn capture_snapshot_base(&mut self) {
+        self.snapshots.capture_base(&self.mixer);
+    }
+
+    /// Store the current bus levels as a named snapshot, replacing any existing one.
+    pub fn capture_named_snapshot(&mut self, name: impl Into<String>) {
+        self.snapshots.capture_named(name, &self.mixer);
+    }
+
+    /// Names of the snapshots currently stored in the mixer.
+    pub fn snapshot_names(&self) -> Vec<String> {
+        self.snapshots.names()
+    }
 }
 
 #[cfg(test)]

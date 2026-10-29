@@ -1,5 +1,11 @@
 //! S3.1 / S5 / S7 — Project model: events, banks, assets, tracks, FX, AHDSR.
 
+use std::path::{Path, PathBuf};
+
+use ramod_runtime::{
+    Ahdsr, Attenuation, AutomationCurve, BankManifest, DesignedEvent, InstrumentDef,
+    InstrumentKind, TimelineTrack, TransitionMarker,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,7 +15,10 @@ pub struct Project {
     pub banks: Vec<BankEntry>,
     pub assets: Vec<AssetEntry>,
     #[serde(default)]
-    pub fx_presets: Vec<FxPresetEntry>,
+    pub fx_presets: Vec<FxPreset>,
+    /// Last save / open location, if the project has been written to disk.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,9 +33,11 @@ pub struct AssetEntry {
     pub demo_freq_hz: Option<f32>,
 }
 
+/// Named insert chain captured from the live mixer (S7.12).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FxPresetEntry {
+pub struct FxPreset {
     pub name: String,
+    /// Encoded inserts — see `AudioBridge::capture_fx_chain` for the format.
     pub inserts: Vec<String>,
 }
 
@@ -87,6 +98,7 @@ impl ParameterDefEntry {
         }
     }
 
+    #[allow(dead_code)] // authoring API: discrete params are not exposed in the UI yet
     pub fn discrete(name: impl Into<String>, default: i32, min_i: i32, max_i: i32) -> Self {
         Self {
             name: name.into(),
@@ -128,7 +140,7 @@ pub enum InstrumentKindEntry {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaylistEntry {
     pub asset_index: Option<usize>,
     #[serde(default = "default_weight")]
@@ -193,6 +205,44 @@ fn default_event_len() -> f32 {
     2.0
 }
 
+impl EventEntry {
+    /// Authoring entry → runtime designed event (shared by playback and bank build).
+    pub fn to_designed(&self) -> DesignedEvent {
+        let mut designed = DesignedEvent::new(&self.path);
+        designed.is_3d = self.is_3d;
+        designed.attenuation = Attenuation {
+            min_distance: self.min_distance.max(0.01),
+            max_distance: self.max_distance.max(self.min_distance.max(0.01) + 0.01),
+        };
+        designed.priority = self.priority;
+        designed.length = self.length;
+        designed.output_bus = self.output_bus.clone();
+        designed.parameters = self.parameters.clone();
+        designed.automation = self
+            .automation
+            .iter()
+            .map(|a| {
+                let mut curve = AutomationCurve::new(&a.parameter);
+                for (time, value) in &a.keys {
+                    curve.add_key(*time, *value);
+                }
+                curve
+            })
+            .collect();
+        designed.markers = self
+            .markers
+            .iter()
+            .map(|m| TransitionMarker {
+                name: m.name.clone(),
+                time: m.time,
+                target_event: m.target_event.clone(),
+            })
+            .collect();
+        designed.tracks = self.tracks.iter().map(TrackEntry::to_designed).collect();
+        designed
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackEntry {
     pub name: String,
@@ -201,6 +251,29 @@ pub struct TrackEntry {
     pub mute: bool,
     #[serde(default)]
     pub solo: bool,
+}
+
+impl TrackEntry {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            instruments: Vec::new(),
+            mute: false,
+            solo: false,
+        }
+    }
+
+    pub fn to_designed(&self) -> TimelineTrack {
+        let mut track = TimelineTrack::new(&self.name);
+        track.mute = self.mute;
+        track.solo = self.solo;
+        track.instruments = self
+            .instruments
+            .iter()
+            .map(InstrumentEntry::to_designed)
+            .collect();
+        track
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +312,39 @@ fn default_sustain() -> f32 {
     1.0
 }
 
+impl InstrumentEntry {
+    pub fn to_designed(&self) -> InstrumentDef {
+        let primary = self.asset_index.unwrap_or(0);
+        let mut def = InstrumentDef::single(&self.name, primary);
+        def.start_time = self.start_time;
+        def.length = self.length;
+        def.probability = self.probability;
+        def.looping = self.looping;
+        def.envelope = Ahdsr {
+            attack: self.attack,
+            hold: self.hold,
+            decay: self.decay,
+            sustain: self.sustain,
+            release: self.release,
+        };
+        match &self.kind {
+            InstrumentKindEntry::Single => {}
+            InstrumentKindEntry::Multi { playlist } => {
+                def.kind = InstrumentKind::Multi;
+                let slots: Vec<usize> = playlist.iter().filter_map(|p| p.asset_index).collect();
+                if !slots.is_empty() {
+                    def.buffer_slots = slots;
+                }
+            }
+            InstrumentKindEntry::Scatterer { count, .. } => {
+                def.kind = InstrumentKind::Scatter;
+                def.scatter_count = (*count as usize).max(1);
+            }
+        }
+        def
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationEntry {
     pub parameter: String,
@@ -246,6 +352,7 @@ pub struct AutomationEntry {
 }
 
 impl AutomationEntry {
+    #[allow(dead_code)] // authoring helper kept for automation presets
     pub fn intensity_fade(start: f32, end: f32, t_end: f32) -> Self {
         Self {
             parameter: "Intensity".into(),
@@ -354,11 +461,13 @@ impl Default for Project {
                 demo_freq_hz: Some(440.0),
             }],
             fx_presets: Vec::new(),
+            path: None,
         }
     }
 }
 
 impl Project {
+    #[allow(dead_code)] // authoring API used by tests and future New-Event menu
     pub fn add_event(&mut self, path: &str) {
         self.events.push(EventEntry {
             path: path.into(),
@@ -381,17 +490,173 @@ impl Project {
         });
     }
 
-    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+    /// Append a track and return its index.
+    pub fn add_track(&mut self, event_index: usize, name: impl Into<String>) -> Option<usize> {
+        let event = self.events.get_mut(event_index)?;
+        event.tracks.push(TrackEntry::new(name));
+        Some(event.tracks.len() - 1)
+    }
+
+    /// Append an instrument to `track_index` and return `(track, instrument)`.
+    pub fn add_instrument(
+        &mut self,
+        event_index: usize,
+        track_index: usize,
+        name: impl Into<String>,
+        asset_index: Option<usize>,
+    ) -> Option<(usize, usize)> {
+        let event = self.events.get_mut(event_index)?;
+        if event.tracks.is_empty() {
+            event.tracks.push(TrackEntry::new("Audio 1"));
+        }
+        let track_index = track_index.min(event.tracks.len() - 1);
+        let track = event.tracks.get_mut(track_index)?;
+        track.instruments.push(InstrumentEntry {
+            name: name.into(),
+            asset_index,
+            start_time: 0.0,
+            length: 0.5,
+            probability: 1.0,
+            looping: false,
+            attack: 0.0,
+            hold: 0.0,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.05,
+            kind: InstrumentKindEntry::Single,
+        });
+        Some((track_index, track.instruments.len() - 1))
+    }
+
+    /// Register a file as an asset and return its index.
+    pub fn add_asset_file(&mut self, path: &Path) -> usize {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("asset")
+            .to_string();
+        if let Some(idx) = self
+            .assets
+            .iter()
+            .position(|a| a.source_path.as_deref() == path.to_str())
+        {
+            return idx;
+        }
+        self.assets.push(AssetEntry {
+            name,
+            source_path: Some(path.to_string_lossy().into_owned()),
+            demo_freq_hz: None,
+        });
+        self.assets.len() - 1
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
         let s = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
         std::fs::write(path, s).map_err(|e| e.to_string())
     }
 
-    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+    #[allow(dead_code)] // authoring API: the Open menu item is not wired yet
+    pub fn load(path: &Path) -> Result<Self, String> {
         let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&s).map_err(|e| e.to_string())
+        let mut project: Self = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+        project.path = Some(path.to_path_buf());
+        Ok(project)
     }
 
-    pub fn export_bank_build(&self, _bank_name: &str, _out_path: &std::path::Path) -> Result<usize, String> {
-        Ok(0)
+    /// Build a bank manifest for every event assigned to `bank_name`.
+    ///
+    /// Writes `<out_path>/<bank>.bank.json` and returns the manifest path.
+    pub fn export_bank_build(&self, bank_name: &str, out_path: &Path) -> Result<PathBuf, String> {
+        let designed: Vec<DesignedEvent> = self
+            .events
+            .iter()
+            .filter(|e| e.bank.eq_ignore_ascii_case(bank_name))
+            .map(EventEntry::to_designed)
+            .collect();
+        if designed.is_empty() {
+            return Err(format!("bank '{bank_name}' has no events"));
+        }
+        let manifest = BankManifest::from_events(bank_name, &designed);
+        std::fs::create_dir_all(out_path).map_err(|e| e.to_string())?;
+        let safe: String = bank_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        let path = out_path.join(format!("{safe}.bank.json"));
+        std::fs::write(&path, manifest.to_json()).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_project_round_trips_through_json() {
+        let project = Project::default();
+        let json = serde_json::to_string(&project).expect("serialize");
+        let back: Project = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.events.len(), project.events.len());
+        assert!(back.path.is_none());
+    }
+
+    #[test]
+    fn add_track_and_instrument_target_the_requested_event() {
+        let mut project = Project::default();
+        let track = project.add_track(1, "Audio 2").expect("event 1 exists");
+        let (t, i) = project
+            .add_instrument(1, track, "clip", Some(0))
+            .expect("instrument added");
+        assert_eq!((t, i), (track, 0));
+        assert_eq!(project.events[1].tracks.len(), 2);
+        assert_eq!(project.events[1].tracks[track].instruments.len(), 1);
+    }
+
+    #[test]
+    fn add_asset_file_is_idempotent() {
+        let mut project = Project::default();
+        let p = Path::new("assets/kick.wav");
+        let first = project.add_asset_file(p);
+        let second = project.add_asset_file(p);
+        assert_eq!(first, second);
+        assert_eq!(project.assets[first].name, "kick");
+    }
+
+    #[test]
+    fn designed_event_carries_timing_and_3d_fields() {
+        let mut event = Project::default().events.remove(0);
+        event.is_3d = true;
+        event.min_distance = 2.0;
+        event.max_distance = 20.0;
+        let designed = event.to_designed();
+        assert!(designed.is_3d);
+        assert_eq!(designed.attenuation.min_distance, 2.0);
+        assert_eq!(designed.tracks.len(), 1);
+        assert_eq!(designed.tracks[0].instruments[0].buffer_slots, vec![0]);
+    }
+
+    #[test]
+    fn bank_build_writes_a_manifest() {
+        let project = Project::default();
+        let out = std::env::temp_dir().join("ramod_bank_build_test");
+        let path = project
+            .export_bank_build("Master", &out)
+            .expect("build succeeds");
+        let text = std::fs::read_to_string(&path).expect("manifest written");
+        assert!(text.contains("event:/sfx/beep"));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn empty_bank_is_reported_not_silently_written() {
+        let project = Project::default();
+        let out = std::env::temp_dir().join("ramod_bank_build_empty");
+        assert!(project.export_bank_build("Missing", &out).is_err());
     }
 }
