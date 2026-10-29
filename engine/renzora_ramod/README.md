@@ -40,7 +40,7 @@ Install **ramod** from the Renzora plugin store. The editor compiles the plugin 
 ### Local / from this repo
 
 1. Clone [RaMOD](https://github.com/SimonTek27/RaMOD).
-2. Copy or symlink `renzora_plugin/` into your engine’s `plugins/` directory as `ramod/` (or install via your usual native-plugin flow).
+2. Copy or symlink `engine/renzora_ramod/` into your engine’s `plugins/` directory as `ramod/` (or install via your usual native-plugin flow).
 3. Ensure a local engine checkout exists so the `renzora` path in `Cargo.toml` resolves for rust-analyzer, **or** rely on the SDK build only.
 4. Restart the editor — it will compile the dylib.
 
@@ -48,7 +48,7 @@ Install **ramod** from the Renzora plugin store. The editor compiles the plugin 
 
 ## Option B (Renzora `Backend` trait)
 
-If you need the engine command queue to drive RaMOD instead of the Bevy plugin path, use the glue in [`docs/renzora_backend_glue.rs`](../docs/renzora_backend_glue.rs) inside a game/plugin crate that already depends on `renzora`.
+If you need the engine command queue to drive RaMOD instead of the Bevy plugin path, use the glue in [`docs/renzora_backend_glue.rs`](../../docs/renzora_backend_glue.rs) inside a game/plugin crate that already depends on `renzora`.
 
 ## Publish (maintainers)
 

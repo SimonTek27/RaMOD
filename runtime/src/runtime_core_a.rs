@@ -136,6 +136,15 @@ impl Runtime {
         &mut self.mixer
     }
 
+    /// Master bus peak / RMS (linear). Same values the profiler records.
+    pub fn master_levels(&self) -> (f32, f32) {
+        let master = self.mixer.master_id();
+        self.mixer
+            .bus(master)
+            .map(|b| (b.meter.peak, b.meter.rms))
+            .unwrap_or((0.0, 0.0))
+    }
+
     pub fn load_pcm(
         &mut self,
         samples: Vec<f32>,

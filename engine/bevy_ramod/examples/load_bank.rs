@@ -41,7 +41,7 @@ fn setup(mut commands: Commands, mut audio: ResMut<RamodAudio>) {
 
     let candidates = [
         PathBuf::from("build/Master/bank.json"),
-        PathBuf::from("bevy_ramod/examples/sample_bank/bank.json"),
+        PathBuf::from("engine/bevy_ramod/examples/sample_bank/bank.json"),
         PathBuf::from("examples/sample_bank/bank.json"),
     ];
 

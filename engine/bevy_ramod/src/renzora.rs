@@ -33,7 +33,6 @@ pub struct RenzoraHost {
 /// Non-send holder for [`RamodRenzoraBackend`] when using Option B without
 /// implementing Renzora's `Backend` trait in this crate (cpal / Runtime are not
 /// `Sync`). Prefer the glue in `docs/renzora_backend_glue.rs` for `add_audio_backend`.
-#[derive(Debug)]
 pub struct RamodBackendCell {
     pub backend: RamodRenzoraBackend,
 }
@@ -97,7 +96,7 @@ impl RenzoraRamodExt for App {
 
     fn insert_ramod_renzora_backend(&mut self, open_device: bool) -> Result<&mut Self, String> {
         let backend = RamodRenzoraBackend::new(open_device)?;
-        self.insert_non_send_resource(RamodBackendCell { backend });
+        self.insert_non_send(RamodBackendCell { backend });
         log::info!(
             "bevy_ramod: RamodRenzoraBackend inserted as NonSend ({})",
             bevy_ramod_renzora_bridge_version()

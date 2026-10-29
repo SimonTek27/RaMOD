@@ -1,6 +1,6 @@
 # RaMOD × Renzora Engine
 
-**Status:** complete for Bevy **0.19** — Option A/B + native plugin `renzora_plugin/` (marketplace id `ramod`) — 2026-10-22
+**Status:** complete for Bevy **0.19** — Option A/B + native plugin `engine/renzora_ramod/` (marketplace id `ramod`) — 2026-10-22
 
 [Renzora Engine](https://github.com/renzora/engine) is a modular 2D/3D game engine on **Bevy 0.19**. Default audio is Kira (`renzora_audio` + `renzora::audio_backend::Backend`).
 
@@ -109,13 +109,13 @@ app.add_ramod_audio_backend(true)?;
 
 ---
 
-## Native plugin / marketplace (`renzora_plugin/`)
+## Native plugin / marketplace (`engine/renzora_ramod/`)
 
 Ship RaMOD as a Renzora **native plugin** (dylib, compiled by the SDK):
 
 | Field | Value |
 |-------|--------|
-| Crate folder | [`renzora_plugin/`](../renzora_plugin/) |
+| Crate folder | [`engine/renzora_ramod/`](../engine/renzora_ramod/) |
 | Package name | `renzora_ramod` |
 | Marketplace id | `ramod` |
 | Scope | **Runtime** (editor + game exports) |
@@ -126,7 +126,7 @@ Ship RaMOD as a Renzora **native plugin** (dylib, compiled by the SDK):
 # renzora publish   # maintainers
 ```
 
-See [`renzora_plugin/README.md`](../renzora_plugin/README.md). Do **not** `cargo build` that folder against crates.io Bevy.
+See [`engine/renzora_ramod/README.md`](../engine/renzora_ramod/README.md). Do **not** `cargo build` that folder against crates.io Bevy.
 
 ## Follow-ups
 
@@ -135,5 +135,5 @@ See [`renzora_plugin/README.md`](../renzora_plugin/README.md). Do **not** `cargo
 - [x] `RamodRenzoraBackend` + bus constants
 - [x] `replace_renzora_audio_with_ramod`
 - [x] Zero-glue reference (`renzora_backend_glue.rs`)
-- [x] Native plugin crate `renzora_plugin/` (marketplace id `ramod`, Runtime)
+- [x] Native plugin crate `engine/renzora_ramod/` (marketplace id `ramod`, Runtime)
 - [ ] Publish to Renzora marketplace (`renzora publish` with credentials)
