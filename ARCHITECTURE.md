@@ -24,17 +24,17 @@ This document defines **how** the pieces fit together.
 ## 1. System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         GAME / BEVY APPLICATION                          │
-│                                                                          │
-│   Components: AudioEmitter, AudioListener, Velocity, BusVolume…          │
-│   Systems: spatial_sync, runtime_tick, event_lifecycle                   │
-│   Assets: Bank, EventDescription, Snapshot                               │
+┌────────────────────────────────────────────────────────────────────────┐
+│                         GAME / BEVY APPLICATION                        │
+│                                                                        │
+│   Components: AudioEmitter, AudioListener, Velocity, BusVolume…        │
+│   Systems: spatial_sync, runtime_tick, event_lifecycle                 │
+│   Assets: Bank, EventDescription, Snapshot                             │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │  bevy_ramod (plugin layer)
 ┌────────────────────────────────▼───────────────────────────────────────┐
-│                         RaMOD RUNTIME (Core)                            │
-│                                                                         │
+│                         RaMOD RUNTIME (Core)                           │
+│                                                                        │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐  │
 │  │   Mixer     │  │   Voices     │  │   Events    │  │  Parameters  │  │
 │  │ hierarchical│  │ + virtual    │  │  system     │  │  + automation│  │
@@ -45,19 +45,19 @@ This document defines **how** the pieces fit together.
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │
 ┌────────────────────────────────▼───────────────────────────────────────┐
-│                    FOUNDATION + CODECS + BANKS                          │
-│                                                                         │
-│  FSB5 R/W/Edit  ·  PCM / Vorbis  ·  Bank format  ·  Sample store        │
-│  (current RaMOD crate – pure std)                                       │
+│                    FOUNDATION + CODECS + BANKS                         │
+│                                                                        │
+│  FSB5 R/W/Edit  ·  PCM / Vorbis  ·  Bank format  ·  Sample store       │
+│  (current RaMOD crate – pure std)                                      │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │
 ┌────────────────────────────────▼───────────────────────────────────────┐
-│                         AUTHORING TOOLS                                 │
-│                                                                         │
-│  Waveform / Spectral Editor (GoldWave-style)                            │
-│  Event Designer (timeline, instruments, automation)                     │
-│  Bank Builder · Batch processor · Live Update client                    │
-└─────────────────────────────────────────────────────────────────────────┘
+│                         AUTHORING TOOLS                                │
+│                                                                        │
+│  Waveform / Spectral Editor (GoldWave-style)                           │
+│  Event Designer (timeline, instruments, automation)                    │
+│  Bank Builder · Batch processor · Live Update client                   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 Three crates (recommended layout):
@@ -66,7 +66,7 @@ Three crates (recommended layout):
 |-------|----------------|
 | `ramod` | Foundation: FSB5, codecs, bank I/O, sample data, pure-Rust encode/decode |
 | `ramod_runtime` | Real-time engine: mixer, voices, events, 3D, DSP, parameters |
-| `bevy_ramod` | Bevy plugin: components, systems, AssetLoaders, Live Update |
+| `engine` | Bevy and Renzora plugin: components, systems, AssetLoaders, Live Update |
 
 Optional later: `ramod_editor` (standalone or embedded GUI).
 
