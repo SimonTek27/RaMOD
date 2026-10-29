@@ -57,6 +57,8 @@ struct RamodEditorApp {
     audio: Option<AudioBridge>,
     intensity: f32,
     live_client: Option<EditorLiveClient>,
+    live_addr: String,
+    last_live_poll: std::time::Instant,
     waveform: WaveformPanel,
     profiler: ProfilerPanel,
     asset_import_path: String,
@@ -85,6 +87,8 @@ impl RamodEditorApp {
             audio,
             intensity: 1.0,
             live_client: None,
+            live_addr: live_client::DEFAULT_ADDR.to_string(),
+            last_live_poll: std::time::Instant::now(),
             waveform,
             profiler: ProfilerPanel::default(),
             asset_import_path: String::new(),
@@ -193,11 +197,102 @@ impl RamodEditorApp {
             }
         }
     }
+
+    // -------------------------------------------------------------- live update
+
+    /// Connect or disconnect the Live Update socket to a running game.
+    fn set_live_update(&mut self, on: bool) {
+        if !on {
+            if let Some(mut client) = self.live_client.take() {
+                client.disconnect();
+            }
+            self.live_update = false;
+            self.status_msg = "Live update off".into();
+            return;
+        }
+        match EditorLiveClient::connect(Some(&self.live_addr)) {
+            Ok(client) => {
+                self.status_msg = format!("Live update → {}", client.addr());
+                self.live_client = Some(client);
+                self.live_update = true;
+            }
+            Err(e) => {
+                self.live_client = None;
+                self.live_update = false;
+                self.status_msg = format!("Live update failed: {e} — is the game running?");
+            }
+        }
+    }
+
+    /// Drain server acks so a closed game socket is noticed promptly.
+    ///
+    /// Throttled: the socket read has a 1 ms timeout, so polling every frame
+    /// would eat frame budget for nothing.
+    fn poll_live(&mut self) {
+        if self.live_client.is_none() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_live_poll) < std::time::Duration::from_millis(100) {
+            return;
+        }
+        self.last_live_poll = now;
+        let drained = match self.live_client.as_mut() {
+            Some(client) => client.drain_replies(),
+            None => return,
+        };
+        match drained {
+            Ok(lines) => {
+                if let Some(last) = lines.last() {
+                    self.status_msg = format!("Live: {last}");
+                }
+            }
+            Err(e) => {
+                self.live_client = None;
+                self.live_update = false;
+                self.status_msg = format!("Live update dropped: {e}");
+            }
+        }
+    }
+
+    fn push_live_param(&mut self, name: &str, value: f32) {
+        let Some(path) = self.selected_path().map(|p| p.to_string()) else {
+            return;
+        };
+        let result = match self.live_client.as_mut() {
+            Some(client) => client.set_param(&path, name, value),
+            None => return,
+        };
+        if let Err(e) = result {
+            self.live_client = None;
+            self.live_update = false;
+            self.status_msg = format!("Live update dropped: {e}");
+        }
+    }
+
+    fn push_live_bus_volume(&mut self, bus_id: u32, db: f32) {
+        let Some(name) = self.audio.as_ref().and_then(|a| a.bus_name(bus_id)) else {
+            return;
+        };
+        if let Some(client) = self.live_client.as_mut() {
+            let _ = client.set_bus_state(&name, Some(db), None, None);
+        }
+    }
+
+    fn push_live_bus_state(&mut self, bus_id: u32, mute: Option<bool>, solo: Option<bool>) {
+        let Some(name) = self.audio.as_ref().and_then(|a| a.bus_name(bus_id)) else {
+            return;
+        };
+        if let Some(client) = self.live_client.as_mut() {
+            let _ = client.set_bus_state(&name, None, mute, solo);
+        }
+    }
 }
 
 impl eframe::App for RamodEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_file_drops(ctx);
+        self.poll_live();
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -215,6 +310,17 @@ impl eframe::App for RamodEditorApp {
                 ui.menu_button("Window", |ui| {
                     ui.checkbox(&mut self.waveform.show, "Waveform Editor");
                     ui.checkbox(&mut self.profiler.show, "Profiler");
+                });
+                ui.menu_button("Live", |ui| {
+                    let mut on = self.live_update;
+                    if ui.checkbox(&mut on, "Push edits to game").changed() {
+                        self.set_live_update(on);
+                    }
+                    ui.weak(self.live_addr.as_str());
+                    ui.weak(match self.live_client.as_ref() {
+                        Some(c) if c.is_connected() => "connected",
+                        _ => "not connected",
+                    });
                 });
                 ui.label(format!("  {}", self.project.name));
             });
@@ -237,6 +343,7 @@ impl eframe::App for RamodEditorApp {
                     if let Some(a) = self.audio.as_mut() {
                         a.set_parameter("Intensity", self.intensity);
                     }
+                    self.push_live_param("Intensity", self.intensity);
                 }
                 ui.separator();
                 let (peak, rms) = self
@@ -287,7 +394,22 @@ impl eframe::App for RamodEditorApp {
         }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.label(&self.status_msg);
+            ui.horizontal(|ui| {
+                let live = self
+                    .live_client
+                    .as_ref()
+                    .map(|c| c.is_connected())
+                    .unwrap_or(false);
+                ui.colored_label(
+                    if live {
+                        egui::Color32::from_rgb(120, 200, 120)
+                    } else {
+                        egui::Color32::from_gray(130)
+                    },
+                    if live { "● live" } else { "○ live" },
+                );
+                ui.label(&self.status_msg);
+            });
         });
 
         egui::SidePanel::left("browser")
@@ -379,16 +501,33 @@ impl eframe::App for RamodEditorApp {
                             if let Some(a) = self.audio.as_mut() {
                                 a.toggle_bus_mute(id);
                             }
+                            let mute = self
+                                .audio
+                                .as_ref()
+                                .and_then(|a| a.bus_flags(id))
+                                .map(|(mute, _)| mute);
+                            if let Some(mute) = mute {
+                                self.push_live_bus_state(id, Some(mute), None);
+                            }
                         }
                         ProfilerAction::ToggleSolo(id) => {
                             if let Some(a) = self.audio.as_mut() {
                                 a.toggle_bus_solo(id);
+                            }
+                            let solo = self
+                                .audio
+                                .as_ref()
+                                .and_then(|a| a.bus_flags(id))
+                                .map(|(_, solo)| solo);
+                            if let Some(solo) = solo {
+                                self.push_live_bus_state(id, None, Some(solo));
                             }
                         }
                         ProfilerAction::SetVolume(id, db) => {
                             if let Some(a) = self.audio.as_mut() {
                                 a.set_bus_volume_db(id, db);
                             }
+                            self.push_live_bus_volume(id, db);
                         }
                         ProfilerAction::CaptureBase => {
                             if let Some(a) = self.audio.as_mut() {

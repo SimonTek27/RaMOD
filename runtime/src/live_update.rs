@@ -57,7 +57,7 @@ impl LiveUpdateServer {
                         .set_read_timeout(Some(Duration::from_millis(1)))
                         .ok();
                     let mut stream_write = stream.try_clone().map_err(|e| e.to_string())?;
-                    let welcome = r#""cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#;
+                    let welcome = r#"{"cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#;
                     let _ = writeln!(stream_write, "{welcome}");
                     let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
                     self.clients.push(ClientConn {
@@ -115,10 +115,10 @@ fn handle_line(rt: &mut Runtime, line: &str) -> Option<String> {
     let cmd = json_str(line, "cmd").unwrap_or("");
     match cmd {
         "hello" => Some(
-            r#""cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#
+            r#"{"cmd":"welcome","server":"ramod_runtime","version":1,"features":["param","bus","snapshot"]}"#
                 .into(),
         ),
-        "ping" => Some(r#""cmd":"pong"}"#.into()),
+        "ping" => Some(r#"{"cmd":"pong"}"#.into()),
         "set_param" => {
             let event = json_str(line, "event").unwrap_or("");
             let name = json_str(line, "name").unwrap_or("");
@@ -152,6 +152,51 @@ fn handle_line(rt: &mut Runtime, line: &str) -> Option<String> {
         _ => Some(format!(
             r#"{{"cmd":"error","message":"unknown cmd"}}"#
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headless() -> Runtime {
+        Runtime::new(crate::RuntimeConfig {
+            open_device: false,
+            ..Default::default()
+        })
+        .expect("headless runtime")
+    }
+
+    fn assert_json_object(reply: Option<String>) {
+        let reply = reply.expect("expected a reply");
+        assert!(
+            reply.starts_with('{') && reply.ends_with('}'),
+            "reply must be a JSON object: {reply}"
+        );
+    }
+
+    #[test]
+    fn handshake_replies_are_json_objects() {
+        let mut rt = headless();
+        assert_json_object(handle_line(&mut rt, r#"{"cmd":"hello"}"#));
+        assert_json_object(handle_line(&mut rt, r#"{"cmd":"ping"}"#));
+        assert_json_object(handle_line(&mut rt, r#"{"cmd":"nope"}"#));
+    }
+
+    #[test]
+    fn set_bus_applies_volume_mute_and_solo() {
+        let mut rt = headless();
+        handle_line(
+            &mut rt,
+            r#"{"cmd":"set_bus","bus":"Music","volume_db":-6.5,"mute":true,"solo":true}"#,
+        );
+        let music = rt
+            .mixer()
+            .buses()
+            .find(|b| b.name == "Music")
+            .expect("Music bus");
+        assert!((music.volume_db + 6.5).abs() < 1e-6);
+        assert!(music.mute && music.solo);
     }
 }
 

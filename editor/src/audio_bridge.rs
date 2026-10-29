@@ -232,6 +232,16 @@ impl AudioBridge {
         }
     }
 
+    /// Bus name for a mixer id, so live-update messages can address it by name.
+    pub fn bus_name(&self, bus_id: u32) -> Option<String> {
+        self.rt.mixer().bus(BusId(bus_id)).map(|b| b.name.clone())
+    }
+
+    /// Current `(mute, solo)` of a bus.
+    pub fn bus_flags(&self, bus_id: u32) -> Option<(bool, bool)> {
+        self.rt.mixer().bus(BusId(bus_id)).map(|b| (b.mute, b.solo))
+    }
+
     pub fn master_levels(&self) -> (f32, f32) {
         let mixer = self.rt.mixer();
         mixer
